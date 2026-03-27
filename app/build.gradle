@@ -1,0 +1,52 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'com.chaquo.python'
+}
+
+android {
+    namespace 'com.rnshello'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.rnshello"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+
+        // Chaquopy needs ABI filters to compile Python C-extensions correctly
+        ndk {
+            abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+chaquopy {
+    defaultConfig {
+        version = "3.11" // Python 3.11 is highly stable for Reticulum
+        pip {
+            // These will be installed into the APK at compile time!
+            install "rns"
+            install "lxmf"
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    
+    // Coil: Because we are passing File Paths instead of byte arrays,
+    // Coil is the best library to load the image path directly to the UI.
+    implementation("io.coil-kt:coil:2.4.0")
+}
