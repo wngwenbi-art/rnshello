@@ -16,33 +16,23 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
+          # Removed "cache: gradle" here to prevent the pre-flight check failure!
 
       - name: Cache Chaquopy / Python dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.chaquopy
           key: ${{ runner.os }}-chaquopy-${{ hashFiles('app/build.gradle') }}
           restore-keys: |
             ${{ runner.os }}-chaquopy-
- - name: Generate Gradle Wrapper
+
+      - name: Generate Gradle Wrapper
         run: gradle wrapper
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
-
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: rnshello-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
