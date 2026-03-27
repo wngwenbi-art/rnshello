@@ -2,9 +2,9 @@ name: rnshello Android Build
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
     branches:[ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   build:
@@ -29,7 +29,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-chaquopy-
 
-      # THE FIX: Generate the wrapper in an empty folder to bypass the Gradle 9 crash!
+      # Generate the wrapper in an empty folder to bypass the Gradle 9 crash
       - name: Generate Gradle Wrapper
         run: |
           mkdir temp_wrap
