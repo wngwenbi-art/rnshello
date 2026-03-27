@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
-    branches: [ "main" ]
+    branches:[ "main" ]
 
 jobs:
   build:
@@ -29,9 +29,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-chaquopy-
 
-      # THE FIX: Force Gradle 8.4 so it is compatible with Android and Chaquopy!
+      # THE FIX: Generate the wrapper in an empty folder to bypass the Gradle 9 crash!
       - name: Generate Gradle Wrapper
-        run: gradle wrapper --gradle-version 8.4
+        run: |
+          mkdir temp_wrap
+          cd temp_wrap
+          gradle wrapper --gradle-version 8.4
+          cd ..
+          mv temp_wrap/gradle temp_wrap/gradlew temp_wrap/gradlew.bat .
+          rm -rf temp_wrap
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
