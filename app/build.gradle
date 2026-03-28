@@ -7,7 +7,8 @@ plugins {
 android {
     namespace 'com.rnshello'
     compileSdk 34
-
+    packagingOptions {
+        doNotStrip "**/*.so"
     defaultConfig {
         applicationId "com.rnshello"
         minSdk 24

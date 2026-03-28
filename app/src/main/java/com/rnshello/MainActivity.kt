@@ -22,14 +22,15 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             Python.start(AndroidPlatform(this))
         }
 
-        // 2. Start RNS in a Background Thread (To prevent startup crash)
+        // 2. Start RNS in a Background Thread
         Thread {
             try {
                 val py = Python.getInstance()
                 
-                // Set the HOME environment variable for Python/RNS
+                // Fixed the Kotlin Nullability Error here
                 val os = py.getModule("os")
-                os.get("environ").callAttr("__setitem__", "HOME", filesDir.absolutePath)
+                val environ = os.get("environ")
+                environ?.callAttr("__setitem__", "HOME", filesDir.absolutePath)
 
                 val rnsBackend = py.getModule("rns_backend")
                 val storagePath = filesDir.absolutePath
@@ -44,6 +45,9 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 }
             } catch (e: Exception) {
                 Log.e("RNS_HELLO", "Failed to start RNS: ${e.message}")
+                runOnUiThread {
+                    addressDisplay.text = "Error: ${e.message}"
+                }
             }
         }.start()
     }
