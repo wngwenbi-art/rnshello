@@ -2,7 +2,7 @@ import os, sys, time, base64, platform
 from types import ModuleType
 import importlib.util, importlib.machinery
 
-# --- SIDEBAND/COLUMBA COMPATIBILITY MOCKS ---
+# --- SIDEBAND/COLUMBA MOCKS ---
 class Dummy:
     def __getattr__(self, name): return Dummy()
     def __call__(self, *args, **kwargs): return Dummy()
@@ -76,17 +76,15 @@ def inject_rnode():
             "interface_enabled": True,
             "outgoing": True,
             "tcp_host": "127.0.0.1",
-            # --- UPDATED RADIO PARAMETERS ---
-            "frequency": 433025000,      # 433.025 MHz
-            "bandwidth": 125000,       # 125 kHz
-            "txpower": 17,             # 17 dBm
-            "spreadingfactor": 8,      # SF8
-            "codingrate": 6,           # CR6
+            "frequency": 433025000,
+            "bandwidth": 125000,
+            "txpower": 17,
+            "spreadingfactor": 8,
+            "codingrate": 6,
             "flow_control": False
-            # --------------------------------
         }
         RNS.Transport.setup_interface(ictx)
-        log("Interface injection successful. RNode tuned to 433.025 MHz.")
+        log("Interface injection successful.")
         return True
     except Exception as e:
         log(f"Injection failed: {e}")
