@@ -44,7 +44,6 @@ def start_rns(storage_path, callback_obj):
     rns_config_dir = os.path.join(str(storage_path), ".reticulum")
     if not os.path.exists(rns_config_dir): os.makedirs(rns_config_dir)
 
-    # Clean config
     with open(os.path.join(rns_config_dir, "config"), "w") as f:
         f.write("[reticulum]\nenable_transport = True\nshare_instance = Yes\n\n[interfaces]")
 
@@ -65,10 +64,10 @@ def start_rns(storage_path, callback_obj):
     return addr
 
 def inject_rnode():
-    log("MANUAL INTERFACE BOOTUP...")
+    log("INJECTING INTERFACE AND FIXING ATTRIBUTES...")
     try:
-        # Import the class directly from the RNS library
         from RNS.Interfaces.Android.RNodeInterface import RNodeInterface
+        from RNS.Interfaces.Interface import Interface
         
         ictx = {
             "name": "Android RNode Bridge",
@@ -85,21 +84,29 @@ def inject_rnode():
             "flow_control": False
         }
         
-        # Instantiate the interface. This immediately triggers the hardware handshake.
-        # owner is RNS.Transport
+        # 1. Instantiate
         new_ifac = RNodeInterface(RNS.Transport, ictx)
+        
+        # 2. THE FIX: Manually set attributes Reticulum expects for outbound packets
+        new_ifac.mode = Interface.MODE_FULL
         new_ifac.IN = True
         new_ifac.OUT = True
-        
-        # Manually push it into the Reticulum Transport loop
+        if not hasattr(new_ifac, "bitrate"):
+            new_ifac.bitrate = 0
+            
+        # 3. Add to the active transport
         RNS.Transport.interfaces.append(new_ifac)
         
-        log("RNode Hardware Handshake Successful.")
-        time.sleep(1)
+        log("Interface initialized and blessed. Waiting for hardware...")
+        time.sleep(2)
+        
+        # 4. Trigger the first mesh visibility
         local_destination.announce()
+        log("Announce sent via Hot-Injected Interface.")
         return "ONLINE"
+        
     except Exception as e:
-        log(f"Interface failed to boot: {e}")
+        log(f"Injection failed: {e}")
         return str(e)
 
 def on_announce(aspect_filter, data, announce_identity, announce_destination):
