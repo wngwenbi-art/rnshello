@@ -34,6 +34,11 @@ def start_rns(storage_path, use_bridge, callback_obj):
     interface_enabled = True
     outgoing = True
     port = socket://127.0.0.1:4321
+    frequency = 433000000
+    bandwidth = 125000
+    txpower = 2
+    spreadingfactor = 7
+    codingrate = 5
     flow_control = False
 """
 

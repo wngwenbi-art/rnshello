@@ -60,7 +60,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             val input = messageInput.text.toString().trim()
             if (input.startsWith("connect:")) {
                 val mac = input.substring(8).trim()
-                saveMacAndRestart(mac)
+                saveMacAndExit(mac)
             } else if (input.startsWith("dest:")) {
                 destinationAddress = input.substring(5).trim()
                 Toast.makeText(this, "Dest: $destinationAddress", Toast.LENGTH_SHORT).show()
@@ -82,13 +82,10 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         }
     }
 
-    // THE FIX: Trigger the stack as soon as permissions are granted!
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
             startStack()
-        } else {
-            addressDisplay.text = "Permission Denied. Please restart app."
         }
     }
 
@@ -101,7 +98,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 var useBridge = "false"
                 if (savedMac.isNotEmpty()) {
                     runOnUiThread { addressDisplay.text = "1. Connecting BT to $savedMac..." }
-                    
                     if (startBtTcpBridge(savedMac)) {
                         runOnUiThread { addressDisplay.text = "2. BT Connected! Starting Python..." }
                         useBridge = "true"
@@ -109,8 +105,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                         runOnUiThread { addressDisplay.text = "BT FAILED! Check pairing or power." }
                         return@Thread 
                     }
-                } else {
-                    runOnUiThread { addressDisplay.text = "Starting local node..." }
                 }
 
                 if (!Python.isStarted()) {
@@ -144,7 +138,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 btSocket = device.createRfcommSocketToServiceRecord(uuid)
                 btSocket?.connect()
             } catch (e: Exception) {
-                Log.w("RNS_HELLO", "Secure BT failed, trying Insecure...", e)
                 btSocket = device.createInsecureRfcommSocketToServiceRecord(uuid)
                 btSocket?.connect()
             }
@@ -192,10 +185,13 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         } catch (e: Exception) {}
     }
 
-    private fun saveMacAndRestart(mac: String) {
-        getSharedPreferences("rns_prefs", MODE_PRIVATE).edit().putString("last_mac", mac).apply()
-        finish()
-        startActivity(intent)
+    private fun saveMacAndExit(mac: String) {
+        getSharedPreferences("rns_prefs", MODE_PRIVATE).edit().putString("last_mac", mac).commit()
+        runOnUiThread { Toast.makeText(this, "MAC Saved! App closing...", Toast.LENGTH_LONG).show() }
+        Thread {
+            Thread.sleep(2000)
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }.start()
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
