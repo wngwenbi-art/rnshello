@@ -82,6 +82,16 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         }
     }
 
+    // THE FIX: Trigger the stack as soon as permissions are granted!
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+            startStack()
+        } else {
+            addressDisplay.text = "Permission Denied. Please restart app."
+        }
+    }
+
     private fun startStack() {
         val prefs = getSharedPreferences("rns_prefs", MODE_PRIVATE)
         val savedMac = prefs.getString("last_mac", "") ?: ""
@@ -97,8 +107,10 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                         useBridge = "true"
                     } else {
                         runOnUiThread { addressDisplay.text = "BT FAILED! Check pairing or power." }
-                        return@Thread // Stop here so user sees the error
+                        return@Thread 
                     }
+                } else {
+                    runOnUiThread { addressDisplay.text = "Starting local node..." }
                 }
 
                 if (!Python.isStarted()) {
@@ -122,24 +134,21 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         try {
             val adapter = BluetoothAdapter.getDefaultAdapter() ?: throw Exception("No BT Adapter")
             val device = adapter.getRemoteDevice(mac)
-            val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB") // Standard Serial UUID
+            val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
             
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 throw Exception("Missing Permission")
             }
             
-            // Try Secure first
             try {
                 btSocket = device.createRfcommSocketToServiceRecord(uuid)
                 btSocket?.connect()
             } catch (e: Exception) {
                 Log.w("RNS_HELLO", "Secure BT failed, trying Insecure...", e)
-                // THE FALLBACK: Required for RNodes on modern Android
                 btSocket = device.createInsecureRfcommSocketToServiceRecord(uuid)
                 btSocket?.connect()
             }
 
-            // Bind Local TCP
             if (tcpServer != null && !tcpServer!!.isClosed) tcpServer!!.close()
             tcpServer = ServerSocket(4321)
             tcpServer?.reuseAddress = true
@@ -154,16 +163,12 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
     private fun bridgeData() {
         try {
-            Log.d("RNS_HELLO", "Waiting for Python TCP Connection...")
-            tcpClient = tcpServer?.accept() // Unblocks when Python connects
-            Log.d("RNS_HELLO", "Python Connected to Bridge!")
-            
+            tcpClient = tcpServer?.accept()
             val btIn = btSocket?.inputStream
             val btOut = btSocket?.outputStream
             val tcpIn = tcpClient?.inputStream
             val tcpOut = tcpClient?.outputStream
 
-            // TCP -> BT
             Thread {
                 try {
                     val buffer = ByteArray(1024)
@@ -174,7 +179,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 } catch (e: Exception) {}
             }.start()
 
-            // BT -> TCP
             Thread {
                 try {
                     val buffer = ByteArray(1024)
@@ -185,9 +189,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 } catch (e: Exception) {}
             }.start()
 
-        } catch (e: Exception) {
-            Log.e("RNS_HELLO", "Bridge Interrupted")
-        }
+        } catch (e: Exception) {}
     }
 
     private fun saveMacAndRestart(mac: String) {
