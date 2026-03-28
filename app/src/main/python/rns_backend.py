@@ -1,16 +1,41 @@
 import os
 import sys
 import time
-import platform
+from types import ModuleType
+import importlib.util
+import importlib.machinery
 
-# --- THE COLUMBA PLATFORM HIJACK ---
-# We must trick Reticulum into thinking it is NOT on Android.
-# This disables the hardcoded check for Kivy-only 'usbserial4a' and 'jnius' libs.
+# --- THE ULTIMATE MOCK 3.0 (Columba/Sideband Edition) ---
+# We mock the Kivy-specific libraries so Reticulum's Android RNode driver 
+# starts up, but we use the TCP host to bypass physical USB checks.
+
+class Dummy:
+    def __getattr__(self, name): return Dummy()
+    def __call__(self, *args, **kwargs): return Dummy()
+
+# Create fake usbserial4a
+mock_usb = ModuleType("usbserial4a")
+mock_usb.__spec__ = importlib.machinery.ModuleSpec("usbserial4a", None)
+mock_usb.serial4a = Dummy()
+mock_usb.get_ports_list = lambda: []
+sys.modules["usbserial4a"] = mock_usb
+
+# Create fake jnius
+mock_jnius = ModuleType("jnius")
+mock_jnius.__spec__ = importlib.machinery.ModuleSpec("jnius", None)
+mock_jnius.autoclass = lambda x: Dummy()
+mock_jnius.cast = lambda x, y: Dummy()
+sys.modules["jnius"] = mock_jnius
+
+# Patch importlib so find_spec returns our mocks
+_orig_find_spec = importlib.util.find_spec
+def _mock_find_spec(name, package=None):
+    if name in ["usbserial4a", "jnius"]: return sys.modules[name].__spec__
+    return _orig_find_spec(name, package)
+importlib.util.find_spec = _mock_find_spec
+# -------------------------------------------------------
+
 import RNS
-RNS.vendor.platformutils.is_android = lambda: False
-platform.system = lambda: "Linux"
-# -----------------------------------
-
 import LXMF
 from LXMF import LXMRouter, LXMessage
 
@@ -33,17 +58,22 @@ def start_rns(storage_path, use_bridge, callback_obj):
     rns_config_dir = os.path.join(str(storage_path), ".reticulum")
     if not os.path.exists(rns_config_dir): os.makedirs(rns_config_dir)
 
-    # Building the config exactly as Columba does for Networked RNodes
+    # Building the interface config using Sideband's tcp_host parameter
     bridge_config = ""
     if str(use_bridge).lower() == "true":
-        log("Tuning RNode via Kotlin TCP-Bluetooth Bridge...")
+        log("Connecting to Native Kotlin Bridge...")
         bridge_config = """
   [[Android RNode Bridge]]
     type = RNodeInterface
     interface_enabled = True
     outgoing = True
-    # Sideband's TCP RNode driver uses port 7633 by default
+    # Port 7633 is the hardcoded default for RNode TCP on Android
     tcp_host = 127.0.0.1
+    frequency = 433000000
+    bandwidth = 125000
+    txpower = 2
+    spreadingfactor = 7
+    codingrate = 5
 """
 
     full_config = f"""[reticulum]

@@ -70,11 +70,10 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 if (!Python.isStarted()) Python.start(AndroidPlatform(this@MainActivity))
                 val py = Python.getInstance()
                 py.getModule("os").get("environ")?.callAttr("__setitem__", "HOME", filesDir.absolutePath)
-                
-                val myAddr = py.getModule("rns_backend").callAttr("start_rns", filesDir.absolutePath, useBridge, this@MainActivity).toString()
+                val addr = py.getModule("rns_backend").callAttr("start_rns", filesDir.absolutePath, useBridge, this@MainActivity).toString()
 
                 runOnUiThread { 
-                    addressDisplay.text = "Addr: $myAddr\nBridge: $useBridge ($savedMac)" 
+                    addressDisplay.text = "Addr: $addr\nBridge: $useBridge ($savedMac)" 
                 }
             } catch (e: Exception) {
                 runOnUiThread { addressDisplay.text = "Init Error: ${e.message}" }
@@ -87,24 +86,28 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             val adapter = BluetoothAdapter.getDefaultAdapter()
             val device = adapter.getRemoteDevice(mac)
             
-            // Forced Channel 1 Reflection (The Samsung/RNode standard)
+            // Channel 1 Reflection (The Samsung/RNode standard)
             val m = device.javaClass.getMethod("createInsecureRfcommSocket", Int::class.javaPrimitiveType)
             btSocket = m.invoke(device, 1) as BluetoothSocket
             btSocket?.connect()
 
-            // Open Port 7633 as required by RNodeInterface.py
+            // Open Port 7633 as required by RNodeInterface.py (TCPConnection class)
             tcpServer = ServerSocket(7633)
             tcpServer?.reuseAddress = true
 
             Thread {
-                val client = tcpServer?.accept()
-                val btIn = btSocket?.inputStream
-                val btOut = btSocket?.outputStream
-                val tcpIn = client?.inputStream
-                val tcpOut = client?.outputStream
+                try {
+                    val client = tcpServer?.accept()
+                    val btIn = btSocket?.inputStream
+                    val btOut = btSocket?.outputStream
+                    val tcpIn = client?.inputStream
+                    val tcpOut = client?.outputStream
 
-                Thread { try { tcpIn?.copyTo(btOut!!) } catch (e: Exception) {} }.start()
-                Thread { try { btIn?.copyTo(tcpOut!!) } catch (e: Exception) {} }.start()
+                    val t1 = Thread { try { tcpIn?.copyTo(btOut!!) } catch (e: Exception) {} }
+                    val t2 = Thread { try { btIn?.copyTo(tcpOut!!) } catch (e: Exception) {} }
+                    t1.start()
+                    t2.start()
+                } catch (e: Exception) {}
             }.start()
             true
         } catch (e: Exception) { false }
