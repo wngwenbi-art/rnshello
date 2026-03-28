@@ -18,6 +18,8 @@ import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -33,7 +35,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     
     private var btSocket: BluetoothSocket? = null
     private var tcpServer: ServerSocket? = null
-    private var tcpClient: Socket? = null
     private var isBridging = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -58,6 +59,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         }
 
         btnRefreshBt.setOnClickListener { updateBtSpinner() }
+        
         btnConnectBt.setOnClickListener {
             if (btSpinner.selectedItem != null) {
                 val selected = btSpinner.selectedItem.toString()
@@ -67,14 +69,22 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         }
 
         btnBroadcast.setOnClickListener {
-            Thread { Python.getInstance().getModule("rns_backend").callAttr("announce_now") }.start()
-            Toast.makeText(this, "Broadcast Sent", Toast.LENGTH_SHORT).show()
+            Thread { 
+                try {
+                    Python.getInstance().getModule("rns_backend").callAttr("announce_now") 
+                } catch (e: Exception) { Log.e("RNS", "Announce Err: ${e.message}") }
+            }.start()
+            Toast.makeText(this, "TX Triggered", Toast.LENGTH_SHORT).show()
         }
 
         btnSend.setOnClickListener {
             val input = messageInput.text.toString().trim()
             if (destinationAddress.isNotEmpty() && input.isNotEmpty()) {
-                Thread { Python.getInstance().getModule("rns_backend").callAttr("send_text", destinationAddress, input) }.start()
+                Thread { 
+                    try {
+                        Python.getInstance().getModule("rns_backend").callAttr("send_text", destinationAddress, input) 
+                    } catch (e: Exception) { Log.e("RNS", "Send Err: ${e.message}") }
+                }.start()
                 messageInput.setText("")
             } else { Toast.makeText(this, "Tap a node first!", Toast.LENGTH_SHORT).show() }
         }
@@ -97,19 +107,15 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     private fun hotConnectBt(mac: String) {
         Thread {
             try {
-                // 1. Reset existing hardware connection safely
                 isBridging = false
                 btSocket?.close()
                 tcpServer?.close()
-                tcpClient?.close()
                 
-                // 2. Open Bluetooth
                 val device = BluetoothAdapter.getDefaultAdapter().getRemoteDevice(mac)
                 val m = device.javaClass.getMethod("createInsecureRfcommSocket", Int::class.javaPrimitiveType)
                 btSocket = m.invoke(device, 1) as BluetoothSocket
                 btSocket?.connect()
                 
-                // 3. THE FIX: Bind strictly to IPv4 127.0.0.1
                 tcpServer = ServerSocket()
                 tcpServer?.reuseAddress = true
                 tcpServer?.bind(InetSocketAddress("127.0.0.1", 7633))
@@ -117,11 +123,10 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 isBridging = true
                 Thread { runBridgeLoop() }.start()
 
-                // 4. Trigger Python RNode Init
                 val pyStatus = Python.getInstance().getModule("rns_backend").callAttr("inject_rnode").toString()
                 runOnUiThread { 
                     addressDisplay.text = "RNode: $pyStatus ($mac)"
-                    Toast.makeText(this, "RNode Initialized", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Bridge Active", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 runOnUiThread { Toast.makeText(this, "BT Error: ${e.message}", Toast.LENGTH_LONG).show() }
@@ -132,39 +137,35 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     private fun runBridgeLoop() {
         while (isBridging) {
             try {
-                // Instantly unblocks when Python connects
                 val client = tcpServer?.accept() ?: break
-                tcpClient = client
                 val btIn = btSocket?.inputStream
                 val btOut = btSocket?.outputStream
                 val tcpIn = client.inputStream
                 val tcpOut = client.outputStream
 
-                // THE FIX: Asynchronous non-blocking threads. No join() lock!
-                Thread {
+                val t1 = Thread { 
                     try {
                         val buffer = ByteArray(1024)
-                        var bytes: Int
-                        while (isBridging && client.isConnected && tcpIn.read(buffer).also { bytes = it } != -1) {
-                            btOut?.write(buffer, 0, bytes)
+                        var bytesRead = 0
+                        while (isBridging && client.isConnected && tcpIn.read(buffer).also { bytesRead = it } != -1) {
+                            btOut?.write(buffer, 0, bytesRead)
                             btOut?.flush()
                         }
                     } catch (e: Exception) {}
-                    try { client.close() } catch (e: Exception) {}
-                }.start()
-
-                Thread {
+                }
+                
+                val t2 = Thread { 
                     try {
                         val buffer = ByteArray(1024)
-                        var bytes: Int
-                        while (isBridging && client.isConnected && btIn?.read(buffer).also { bytes = it ?: -1 } != -1) {
-                            tcpOut.write(buffer, 0, bytes)
+                        var bytesRead = 0
+                        while (isBridging && client.isConnected && btIn?.read(buffer).also { bytesRead = it ?: -1 } != -1) {
+                            tcpOut.write(buffer, 0, bytesRead)
                             tcpOut.flush()
                         }
                     } catch (e: Exception) {}
-                    try { client.close() } catch (e: Exception) {}
-                }.start()
-
+                }
+                
+                t1.start(); t2.start()
             } catch (e: Exception) { break }
         }
     }
@@ -177,7 +178,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 py.getModule("os").get("environ")?.callAttr("__setitem__", "HOME", filesDir.absolutePath)
                 val addr = py.getModule("rns_backend").callAttr("start_rns", filesDir.absolutePath, this).toString()
                 runOnUiThread { 
-                    addressDisplay.text = "My Addr: $addr\nStatus: Ready"
+                    addressDisplay.text = "My Addr: $addr"
                     updateBtSpinner()
                 }
             } catch (e: Exception) { Log.e("RNS", e.message ?: "") }
@@ -194,7 +195,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     }
 
     override fun onTextReceived(senderHash: String, text: String) {
-        runOnUiThread { Toast.makeText(this, "MSG from $senderHash: $text", Toast.LENGTH_LONG).show() }
+        runOnUiThread { Toast.makeText(this, "MSG: $text", Toast.LENGTH_LONG).show() }
     }
 
     override fun onImageReceived(senderHash: String, imagePath: String) {
@@ -218,8 +219,8 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                     BitmapFactory.decodeStream(stream)?.compress(Bitmap.CompressFormat.WEBP, 20, out)
                     out.close()
                     Python.getInstance().getModule("rns_backend").callAttr("send_image", destinationAddress, tempFile.absolutePath)
-                    runOnUiThread { Toast.makeText(this, "Sent WebP Image", Toast.LENGTH_SHORT).show() }
-                } catch (e: Exception) { Log.e("RNS_HELLO", "Img Err: ${e.message}") }
+                    runOnUiThread { Toast.makeText(this, "Sent WebP", Toast.LENGTH_SHORT).show() }
+                } catch (e: Exception) { Log.e("RNS", "Img Err: ${e.message}") }
             }.start()
         }
     }
