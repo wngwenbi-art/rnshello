@@ -1,4 +1,4 @@
-﻿import os
+import os
 import RNS
 import LXMF
 import time
@@ -19,10 +19,8 @@ def start_rns(storage_path, bt_mac, callback_obj):
     if not os.path.exists(rns_config_dir):
         os.makedirs(rns_config_dir)
 
-    # 1. Start Reticulum
     RNS.Reticulum(configdir=rns_config_dir)
     
-    # 2. Identity
     identity_path = os.path.join(rns_config_dir, "storage_identity")
     if os.path.exists(identity_path):
         local_identity = RNS.Identity.from_file(identity_path)
@@ -30,7 +28,6 @@ def start_rns(storage_path, bt_mac, callback_obj):
         local_identity = RNS.Identity()
         local_identity.to_file(identity_path)
 
-    # 3. Start LXMF Router (The Sideband Core)
     router = LXMF.LXMRouter(storage_path=rns_config_dir)
     local_destination = router.register_delivery_destination(local_identity, display_name="rnshello")
     local_destination.set_delivery_callback(on_lxmf_delivery)
