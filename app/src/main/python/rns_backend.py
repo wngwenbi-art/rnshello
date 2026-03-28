@@ -34,7 +34,7 @@ def start_rns(storage_path, bt_mac, callback_obj):
     RNS.Reticulum(configdir=rns_config_dir)
     log("RNS Stack is online.")
 
-    # 2. Identity Generation
+    # 2. Identity
     identity_path = os.path.join(rns_config_dir, "storage_identity")
     if os.path.exists(identity_path):
         local_identity = RNS.Identity.from_file(identity_path)
@@ -50,19 +50,22 @@ def start_rns(storage_path, bt_mac, callback_obj):
     log("Initializing LXMF Router...")
     
     try:
-        # CORRECTED: 'storagepath' instead of 'storage_path'
         router = LXMF.LXMRouter(
             identity=local_identity,
             storagepath=lxmf_storage_dir
         )
         log("LXMF Router instance created.")
         
-        local_destination = router.register_delivery_destination(
-            local_identity, 
-            display_name="rnshello"
+        # CORRECTED: Use LXMessageDestination instead of register_delivery_destination
+        local_destination = LXMF.LXMessageDestination(
+            local_identity,
+            router,
+            "rnshello"
         )
+        
+        # Set the callback on the destination object
         local_destination.set_delivery_callback(on_lxmf_delivery)
-        log("Destination registered.")
+        log("LXMF Destination registered.")
         
     except Exception as e:
         log(f"CRITICAL ERROR during LXMF Init: {e}")
@@ -72,6 +75,8 @@ def start_rns(storage_path, bt_mac, callback_obj):
         connect_rnode_bluetooth(bt_mac)
 
     addr = RNS.hexrep(local_destination.hash, delimit=False)
+    
+    # Manual announcement to trigger mesh visibility
     local_destination.announce()
     log(f"Backend fully ready. Address: {addr}")
     
@@ -97,7 +102,9 @@ def connect_rnode_bluetooth(mac_address):
 def on_lxmf_delivery(lxm):
     try:
         sender = RNS.hexrep(lxm.source_hash, delimit=False)
+        # LXMF content is already bytes, decode to string
         content = lxm.content.decode("utf-8")
+        log(f"Received LXM from {sender}")
         if kotlin_ui_callback:
             kotlin_ui_callback.onTextReceived(sender, content)
     except Exception as e:
@@ -107,9 +114,15 @@ def send_text(dest_hex, text):
     try:
         dest_hash = bytes.fromhex(dest_hex)
         dest_id = RNS.Identity.recall(dest_hash)
-        # If identity not found, LXMF will try to announce/discover
-        dest = RNS.Destination(dest_id, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
-        lxm = LXMF.LXMessage(dest, local_destination, text, title="rnshello")
+        
+        # If we don't have the identity in the mesh yet, we might need an announcement first
+        # but LXMF handles much of this in the background
+        destination = RNS.Destination(dest_id, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
+        
+        # Create LXMessage (Destination, Source, Content, Title)
+        lxm = LXMF.LXMessage(destination, local_destination, text, title="rnshello")
+        
+        # Hand to router
         router.handle_outbound(lxm)
         log(f"Message sent to {dest_hex}")
         return True
