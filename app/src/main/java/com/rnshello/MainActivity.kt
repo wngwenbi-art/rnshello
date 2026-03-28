@@ -2,6 +2,7 @@ package com.rnshello
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -27,7 +28,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     private lateinit var messageInput: EditText
     private var destinationAddress: String = ""
     private var btSocket: BluetoothSocket? = null
-    private var lastBtError: String = ""
+    private var lastBtError: String = "NO MAC SAVED"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,21 +54,31 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             val input = messageInput.text.toString().trim()
             if (input.startsWith("connect:")) {
                 val mac = input.substring(8).trim().uppercase()
-                getSharedPreferences("rns_prefs", MODE_PRIVATE).edit().putString("last_mac", mac).commit()
-                Toast.makeText(this, "MAC Saved. RESTARTING...", Toast.LENGTH_SHORT).show()
-                Thread { Thread.sleep(1000); android.os.Process.killProcess(android.os.Process.myPid()) }.start()
+                // Use commit() and verify it
+                val saved = getSharedPreferences("rns_prefs", MODE_PRIVATE).edit().putString("last_mac", mac).commit()
+                if (saved) {
+                    Toast.makeText(this, "MAC $mac Saved. Restarting...", Toast.LENGTH_LONG).show()
+                    Thread { 
+                        Thread.sleep(1500)
+                        android.os.Process.killProcess(android.os.Process.myPid()) 
+                    }.start()
+                }
             } else if (destinationAddress.isNotEmpty() && input.isNotEmpty()) {
                 Thread {
                     try {
                         Python.getInstance().getModule("rns_backend").callAttr("send_text", destinationAddress, input)
                     } catch (e: Exception) { Log.e("RNS_HELLO", "Send Err: ${e.message}") }
                 }.start()
+                messageInput.setText("")
+            } else if (destinationAddress.isEmpty()) {
+                Toast.makeText(this, "Type dest:HEX_ADDRESS first", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
     private fun startStack() {
-        val savedMac = getSharedPreferences("rns_prefs", MODE_PRIVATE).getString("last_mac", "") ?: ""
+        val prefs = getSharedPreferences("rns_prefs", MODE_PRIVATE)
+        val savedMac = prefs.getString("last_mac", "") ?: ""
 
         Thread {
             try {
@@ -90,7 +101,10 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
                 runOnUiThread { 
                     val status = if (bridgeStatus == "true") "CONNECTED" else "ERR: $lastBtError"
-                    addressDisplay.text = "Addr: $myAddr\nBT ($savedMac): $status" 
+                    addressDisplay.text = "Addr: $myAddr\nBT ($savedMac): $status"
+                    if (savedMac.isEmpty()) {
+                        Toast.makeText(this@MainActivity, "Type connect:MAC_ADDRESS to start bridge", Toast.LENGTH_LONG).show()
+                    }
                 }
 
             } catch (e: Exception) {
@@ -103,26 +117,40 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         return try {
             val adapter = BluetoothAdapter.getDefaultAdapter() ?: return false
             val device = adapter.getRemoteDevice(mac)
-            val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
             
-            btSocket = device.createInsecureRfcommSocketToServiceRecord(uuid)
-            btSocket?.connect()
+            // SAMSUNG / RNODE FIX: 
+            // Instead of UUID, use Reflection to force a connection to RFCOMM Channel 1
+            // This bypasses the "Service Discovery Failed" error 99% of the time.
+            try {
+                val m = device.javaClass.getMethod("createInsecureRfcommSocket", Int::class.javaPrimitiveType)
+                btSocket = m.invoke(device, 1) as BluetoothSocket
+                btSocket?.connect()
+            } catch (e: Exception) {
+                // Fallback to standard UUID if reflection fails
+                val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+                btSocket = device.createInsecureRfcommSocketToServiceRecord(uuid)
+                btSocket?.connect()
+            }
 
             val server = ServerSocket(4321)
             server.reuseAddress = true
             Thread {
-                val client = server.accept()
-                val btIn = btSocket?.inputStream
-                val btOut = btSocket?.outputStream
-                val tcpIn = client?.inputStream
-                val tcpOut = client?.outputStream
+                try {
+                    val client = server.accept()
+                    val btIn = btSocket?.inputStream
+                    val btOut = btSocket?.outputStream
+                    val tcpIn = client?.inputStream
+                    val tcpOut = client?.outputStream
 
-                Thread { try { tcpIn?.copyTo(btOut!!) } catch (e: Exception) {} }.start()
-                Thread { try { btIn?.copyTo(tcpOut!!) } catch (e: Exception) {} }.start()
+                    val t1 = Thread { try { tcpIn?.copyTo(btOut!!) } catch (e: Exception) {} }
+                    val t2 = Thread { try { btIn?.copyTo(tcpOut!!) } catch (e: Exception) {} }
+                    t1.start()
+                    t2.start()
+                } catch (e: Exception) {}
             }.start()
             true
         } catch (e: Exception) {
-            lastBtError = e.message ?: "Unknown BT Error"
+            lastBtError = e.message ?: "Unknown Connection Error"
             false
         }
     }
