@@ -43,6 +43,8 @@ chaquopy {
         pip {
             install "rns"
             install "lxmf"
+	    install "pyserial" # Added for RNode serial communication
+
         }
     }
 }

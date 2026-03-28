@@ -1,9 +1,12 @@
 package com.rnshello
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 
@@ -14,50 +17,52 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
         addressDisplay = findViewById(R.id.addressDisplay)
 
-        // 1. Initialize Chaquopy
+        // 1. Request Bluetooth Permissions (Critical for Android 12+)
+        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.ACCESS_FINE_LOCATION)
+        } else {
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+        
+        if (permissions.any { ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }) {
+            ActivityCompat.requestPermissions(this, permissions, 1)
+        } else {
+            initRns()
+        }
+    }
+
+    private fun initRns() {
         if (!Python.isStarted()) {
             Python.start(AndroidPlatform(this))
         }
 
-        // 2. Start RNS in a Background Thread
         Thread {
             try {
                 val py = Python.getInstance()
-                
-                // Fixed the Kotlin Nullability Error here
-                val os = py.getModule("os")
-                val environ = os.get("environ")
-                environ?.callAttr("__setitem__", "HOME", filesDir.absolutePath)
-
                 val rnsBackend = py.getModule("rns_backend")
-                val storagePath = filesDir.absolutePath
                 
-                // Start RNS and get our address
-                val myAddr = rnsBackend.callAttr("start_rns", storagePath, this).toString()
+                // IMPORTANT: If you know your RNode's BT MAC, put it here, 
+                // e.g., "AA:BB:CC:DD:EE:FF". If empty, it will search paired devices.
+                val btMac = "" 
+                
+                val myAddr = rnsBackend.callAttr("start_rns", filesDir.absolutePath, btMac, this).toString()
 
-                // Update UI on the main thread
                 runOnUiThread {
-                    addressDisplay.text = "My Address: $myAddr"
-                    Log.d("RNS_HELLO", "RNS Started: $myAddr")
+                    addressDisplay.text = "My Address: $myAddr\nConnected to RNode: BT"
                 }
             } catch (e: Exception) {
-                Log.e("RNS_HELLO", "Failed to start RNS: ${e.message}")
-                runOnUiThread {
-                    addressDisplay.text = "Error: ${e.message}"
-                }
+                runOnUiThread { addressDisplay.text = "RNS Error: ${e.message}" }
             }
         }.start()
     }
 
-    // Callbacks from Python
     override fun onTextReceived(senderHash: String, text: String) {
-        runOnUiThread { Log.d("RNS_HELLO", "Text from $senderHash: $text") }
+        // UI code to show message
     }
 
     override fun onImageReceived(senderHash: String, imagePath: String) {
-        runOnUiThread { Log.d("RNS_HELLO", "Image from $senderHash at: $imagePath") }
+        // UI code to show image
     }
 }
