@@ -1,7 +1,6 @@
 package com.rnshello
 
 interface RnsCallback {
-    fun onTextReceived(senderHash: String, text: String)
-    fun onImageReceived(senderHash: String, imagePath: String)
+    fun onNewMessage(message: Message)
     fun onAnnounceReceived(hexAddress: String)
 }

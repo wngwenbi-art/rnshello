@@ -25,12 +25,12 @@ router = None
 local_identity = None
 local_destination = None
 kotlin_ui_callback = None
+own_address_hex = "" # Store own address in Python
 
 def log(msg):
     print(f"RNS-LOG: {msg}")
     sys.stdout.flush()
 
-# --- THE DISCOVERY HANDLER CLASS ---
 class MeshDiscoveryHandler:
     def __init__(self):
         self.aspect_filter = None # Listen to everything
@@ -45,17 +45,18 @@ class MeshDiscoveryHandler:
             log(f"Discovery Error: {e}")
 
 def start_rns(storage_path, callback_obj):
-    global router, local_identity, local_destination, kotlin_ui_callback
+    global router, local_identity, local_destination, kotlin_ui_callback, own_address_hex
     kotlin_ui_callback = callback_obj
     
     tmp = os.path.join(str(storage_path), "tmp")
     if not os.path.exists(tmp): os.makedirs(tmp)
     os.environ["TMPDIR"] = tmp
+
     rns_config_dir = os.path.join(str(storage_path), ".reticulum")
     if not os.path.exists(rns_config_dir): os.makedirs(rns_config_dir)
 
-    with open(os.path.join(rns_config_dir, "config"), "w") as f:
-        f.write("[reticulum]\nenable_transport = True\nshare_instance = Yes\n\n[interfaces]")
+    full_config = "[reticulum]\nenable_transport = True\nshare_instance = Yes\n\n[interfaces]"
+    with open(os.path.join(rns_config_dir, "config"), "w") as f: f.write(full_config)
 
     RNS.Reticulum(configdir=rns_config_dir)
     
@@ -69,16 +70,15 @@ def start_rns(storage_path, callback_obj):
     local_destination = router.register_delivery_identity(local_identity, display_name="rnshello")
     router.register_delivery_callback(on_lxmf_delivery)
     
-    # REGISTER THE DISCOVERY CLASS
     discovery_handler = MeshDiscoveryHandler()
     RNS.Transport.register_announce_handler(discovery_handler)
     
-    addr = RNS.hexrep(local_destination.hash, delimit=False)
-    log(f"RNS Node Ready: {addr}")
-    return addr
+    own_address_hex = RNS.hexrep(local_destination.hash, delimit=False)
+    # local_destination.announce() # Initial announce is done by Kotlin in this setup
+    return own_address_hex
 
 def inject_rnode():
-    log("Tuning RNode: 433.025 MHz SF8 CR6...")
+    log("Injecting RNode Parameters...")
     try:
         from RNS.Interfaces.Android.RNodeInterface import RNodeInterface
         from RNS.Interfaces.Interface import Interface
@@ -103,24 +103,35 @@ def inject_rnode():
         RNS.Transport.interfaces.append(new_ifac)
         
         log("RNode Hardware Synchronized.")
-        time.sleep(1)
-        # First announce to mesh
-        local_destination.announce()
+        time.sleep(1) # Give it time to sync
+        local_destination.announce() # Announce after connection
         return "ONLINE"
     except Exception as e:
+        log(f"Injection failed: {e}")
         return str(e)
 
 def on_lxmf_delivery(lxm):
-    sender = RNS.hexrep(lxm.source_hash, delimit=False)
+    sender_hash = RNS.hexrep(lxm.source_hash, delimit=False)
     content = lxm.content.decode("utf-8")
+    current_timestamp = int(time.time() * 1000) # Milliseconds
+    
     if content.startswith("IMG:"):
         try:
-            file_path = os.path.join(os.environ["TMPDIR"], f"rec_{int(time.time())}.webp")
-            with open(file_path, "wb") as f: f.write(base64.b64decode(content[4:]))
-            if kotlin_ui_callback: kotlin_ui_callback.onImageReceived(sender, file_path)
-        except: pass
+            base64_data = content[4:]
+            img_bytes = base64.b64decode(base64_data)
+            file_name = f"rec_{current_timestamp}.webp"
+            file_path = os.path.join(os.environ["TMPDIR"], file_name)
+            with open(file_path, "wb") as f: f.write(img_bytes)
+            
+            # Send full message object
+            if kotlin_ui_callback:
+                kotlin_ui_callback.onNewMessage(sender_hash, file_path, current_timestamp, True, False) # isImage=True, isSent=False
+        except Exception as e:
+            log(f"Image decode failed: {e}")
     else:
-        if kotlin_ui_callback: kotlin_ui_callback.onTextReceived(sender, content)
+        if kotlin_ui_callback:
+            # Send full message object
+            kotlin_ui_callback.onNewMessage(sender_hash, content, current_timestamp, False, False) # isImage=False, isSent=False
 
 def send_text(dest_hex, text):
     try:
@@ -140,5 +151,5 @@ def send_image(dest_hex, file_path):
 
 def announce_now():
     if local_destination: 
-        log("Broadcasting Identity to Mesh...")
+        log("Manual Broadcast Triggered")
         local_destination.announce()

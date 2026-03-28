@@ -44,8 +44,7 @@ chaquopy {
             install "rns"
             install "lxmf"
             install "pyserial"
-            // THE CRITICAL FIX: Reticulum requires this on Android for RNodeInterface
-            install "usbserial4a"
+            install "cryptography"
         }
     }
 }
@@ -55,6 +54,6 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
-    implementation 'androidx.recyclerview:recyclerview:1.3.0'
+    implementation 'androidx.recyclerview:recyclerview:1.3.0' // Make sure this is present
     implementation "io.coil-kt:coil:2.4.0"
 }
