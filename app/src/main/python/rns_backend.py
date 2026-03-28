@@ -2,25 +2,20 @@ import os, sys, time, base64, platform
 from types import ModuleType
 import importlib.util, importlib.machinery
 
-# --- ULTIMATE SIDEBAND MOCKS ---
+# --- SIDEBAND/COLUMBA COMPATIBILITY MOCKS ---
 class Dummy:
     def __getattr__(self, name): return Dummy()
     def __call__(self, *args, **kwargs): return Dummy()
-mock_usb = ModuleType("usbserial4a")
-mock_usb.__spec__ = importlib.machinery.ModuleSpec("usbserial4a", None)
-mock_usb.serial4a = Dummy()
-mock_usb.get_ports_list = lambda: []
-sys.modules["usbserial4a"] = mock_usb
-mock_jnius = ModuleType("jnius")
-mock_jnius.__spec__ = importlib.machinery.ModuleSpec("jnius", None)
-mock_jnius.autoclass = lambda x: Dummy()
-mock_jnius.cast = lambda x, y: Dummy()
-sys.modules["jnius"] = mock_jnius
+mock_usb = ModuleType("usbserial4a"); mock_usb.__spec__ = importlib.machinery.ModuleSpec("usbserial4a", None)
+mock_usb.serial4a = Dummy(); mock_usb.get_ports_list = lambda: []; sys.modules["usbserial4a"] = mock_usb
+mock_jnius = ModuleType("jnius"); mock_jnius.__spec__ = importlib.machinery.ModuleSpec("jnius", None)
+mock_jnius.autoclass = lambda x: Dummy(); mock_jnius.cast = lambda x, y: Dummy(); sys.modules["jnius"] = mock_jnius
 _orig_find_spec = importlib.util.find_spec
 def _mock_find_spec(name, package=None):
     if name in ["usbserial4a", "jnius"]: return sys.modules[name].__spec__
     return _orig_find_spec(name, package)
 importlib.util.find_spec = _mock_find_spec
+# --------------------------------------------
 
 import RNS
 import LXMF
@@ -35,12 +30,27 @@ def log(msg):
     print(f"RNS-LOG: {msg}")
     sys.stdout.flush()
 
+# --- THE DISCOVERY HANDLER CLASS ---
+class MeshDiscoveryHandler:
+    def __init__(self):
+        self.aspect_filter = None # Listen to everything
+
+    def received_announce(self, destination_hash, announced_identity, app_data):
+        try:
+            hash_str = RNS.hexrep(destination_hash, delimit=False)
+            log(f"MESH DISCOVERY: Found node {hash_str}")
+            if kotlin_ui_callback:
+                kotlin_ui_callback.onAnnounceReceived(hash_str)
+        except Exception as e:
+            log(f"Discovery Error: {e}")
+
 def start_rns(storage_path, callback_obj):
     global router, local_identity, local_destination, kotlin_ui_callback
     kotlin_ui_callback = callback_obj
     
-    os.environ["TMPDIR"] = os.path.join(str(storage_path), "tmp")
-    if not os.path.exists(os.environ["TMPDIR"]): os.makedirs(os.environ["TMPDIR"])
+    tmp = os.path.join(str(storage_path), "tmp")
+    if not os.path.exists(tmp): os.makedirs(tmp)
+    os.environ["TMPDIR"] = tmp
     rns_config_dir = os.path.join(str(storage_path), ".reticulum")
     if not os.path.exists(rns_config_dir): os.makedirs(rns_config_dir)
 
@@ -58,17 +68,20 @@ def start_rns(storage_path, callback_obj):
     router = LXMRouter(identity=local_identity, storagepath=os.path.join(str(storage_path), ".lxmf"))
     local_destination = router.register_delivery_identity(local_identity, display_name="rnshello")
     router.register_delivery_callback(on_lxmf_delivery)
-    RNS.Transport.register_announce_handler(on_announce)
+    
+    # REGISTER THE DISCOVERY CLASS
+    discovery_handler = MeshDiscoveryHandler()
+    RNS.Transport.register_announce_handler(discovery_handler)
     
     addr = RNS.hexrep(local_destination.hash, delimit=False)
+    log(f"RNS Node Ready: {addr}")
     return addr
 
 def inject_rnode():
-    log("INJECTING INTERFACE AND FIXING ATTRIBUTES...")
+    log("Tuning RNode: 433.025 MHz SF8 CR6...")
     try:
         from RNS.Interfaces.Android.RNodeInterface import RNodeInterface
         from RNS.Interfaces.Interface import Interface
-        
         ictx = {
             "name": "Android RNode Bridge",
             "type": "RNodeInterface",
@@ -83,35 +96,19 @@ def inject_rnode():
             "codingrate": 6,
             "flow_control": False
         }
-        
-        # 1. Instantiate
         new_ifac = RNodeInterface(RNS.Transport, ictx)
-        
-        # 2. THE FIX: Manually set attributes Reticulum expects for outbound packets
         new_ifac.mode = Interface.MODE_FULL
         new_ifac.IN = True
         new_ifac.OUT = True
-        if not hasattr(new_ifac, "bitrate"):
-            new_ifac.bitrate = 0
-            
-        # 3. Add to the active transport
         RNS.Transport.interfaces.append(new_ifac)
         
-        log("Interface initialized and blessed. Waiting for hardware...")
-        time.sleep(2)
-        
-        # 4. Trigger the first mesh visibility
+        log("RNode Hardware Synchronized.")
+        time.sleep(1)
+        # First announce to mesh
         local_destination.announce()
-        log("Announce sent via Hot-Injected Interface.")
         return "ONLINE"
-        
     except Exception as e:
-        log(f"Injection failed: {e}")
         return str(e)
-
-def on_announce(aspect_filter, data, announce_identity, announce_destination):
-    dest_hash = RNS.hexrep(announce_destination.hash, delimit=False)
-    if kotlin_ui_callback: kotlin_ui_callback.onAnnounceReceived(dest_hash)
 
 def on_lxmf_delivery(lxm):
     sender = RNS.hexrep(lxm.source_hash, delimit=False)
@@ -143,5 +140,5 @@ def send_image(dest_hex, file_path):
 
 def announce_now():
     if local_destination: 
-        log("Manual Broadcast Triggered")
+        log("Broadcasting Identity to Mesh...")
         local_destination.announce()
