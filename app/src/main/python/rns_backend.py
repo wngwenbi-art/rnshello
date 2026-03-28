@@ -2,7 +2,7 @@ import os, sys, time, base64, platform
 from types import ModuleType
 import importlib.util, importlib.machinery
 
-# --- SIDEBAND/COLUMBA MOCKS ---
+# --- SIDEBAND/COLUMBA COMPATIBILITY MOCKS ---
 class Dummy:
     def __getattr__(self, name): return Dummy()
     def __call__(self, *args, **kwargs): return Dummy()
@@ -47,7 +47,6 @@ def start_rns(storage_path, callback_obj):
     rns_config_dir = os.path.join(str(storage_path), ".reticulum")
     if not os.path.exists(rns_config_dir): os.makedirs(rns_config_dir)
 
-    # Clean config
     full_config = "[reticulum]\nenable_transport = True\nshare_instance = Yes\n\n[interfaces]\n  [[Auto Interface]]\n    type = AutoInterface\n    interface_enabled = False"
     with open(os.path.join(rns_config_dir, "config"), "w") as f: f.write(full_config)
 
@@ -69,7 +68,7 @@ def start_rns(storage_path, callback_obj):
     return addr
 
 def inject_rnode():
-    log("Hot-Injecting RNode Interface...")
+    log("Hot-Injecting RNode with CUSTOM PARAMETERS...")
     try:
         ictx = {
             "name": "Android RNode Bridge",
@@ -77,14 +76,17 @@ def inject_rnode():
             "interface_enabled": True,
             "outgoing": True,
             "tcp_host": "127.0.0.1",
-            "frequency": 433000000,
-            "bandwidth": 125000,
-            "txpower": 2,
-            "spreadingfactor": 7,
-            "codingrate": 5
+            # --- UPDATED RADIO PARAMETERS ---
+            "frequency": 433025000,      # 433.025 MHz
+            "bandwidth": 125000,       # 125 kHz
+            "txpower": 17,             # 17 dBm
+            "spreadingfactor": 8,      # SF8
+            "codingrate": 6,           # CR6
+            "flow_control": False
+            # --------------------------------
         }
         RNS.Transport.setup_interface(ictx)
-        log("Interface injection successful.")
+        log("Interface injection successful. RNode tuned to 433.025 MHz.")
         return True
     except Exception as e:
         log(f"Injection failed: {e}")
@@ -92,7 +94,6 @@ def inject_rnode():
 
 def on_announce(aspect_filter, data, announce_identity, announce_destination):
     dest_hash = RNS.hexrep(announce_destination.hash, delimit=False)
-    log(f"Heard announce from {dest_hash}")
     if kotlin_ui_callback: kotlin_ui_callback.onAnnounceReceived(dest_hash)
 
 def on_lxmf_delivery(lxm):
@@ -124,6 +125,4 @@ def send_image(dest_hex, file_path):
     except: return False
 
 def announce_now():
-    if local_destination: 
-        log("Manual Broadcast Triggered")
-        local_destination.announce()
+    if local_destination: local_destination.announce()
