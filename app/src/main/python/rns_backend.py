@@ -17,45 +17,66 @@ def start_rns(storage_path, bt_mac, callback_obj):
     global router, local_identity, local_destination, kotlin_ui_callback
     kotlin_ui_callback = callback_obj
     
+    # --- CRITICAL ANDROID FIX: Set TMPDIR for SQLite ---
+    temp_dir = os.path.join(str(storage_path), "tmp")
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)
+    os.environ["TMPDIR"] = temp_dir
+    # ---------------------------------------------------
+
     log("Initializing Reticulum...")
     rns_config_dir = os.path.join(str(storage_path), ".reticulum")
-    if not os.path.exists(rns_config_dir):
-        os.makedirs(rns_config_dir)
+    lxmf_storage_dir = os.path.join(str(storage_path), ".lxmf")
+    
+    for d in [rns_config_dir, lxmf_storage_dir]:
+        if not os.path.exists(d): os.makedirs(d)
 
     # 1. Start RNS
     RNS.Reticulum(configdir=rns_config_dir)
     log("RNS Stack is online.")
 
-    # 2. Identity Generation (The part that was taking time)
+    # 2. Identity Generation
     identity_path = os.path.join(rns_config_dir, "storage_identity")
     if os.path.exists(identity_path):
-        log("Loading existing Identity...")
         local_identity = RNS.Identity.from_file(identity_path)
+        log("Identity loaded.")
     else:
-        log("Generating NEW Identity (this can take 30-60 seconds on mobile)...")
+        log("Generating NEW Identity...")
         local_identity = RNS.Identity()
         local_identity.to_file(identity_path)
-        log("Identity generated and saved.")
+        log("Identity generated.")
 
-    # 3. Initialize LXMF Router
-    log("Initializing LXMF Router...")
-    router = LXMF.LXMRouter(storage_path=rns_config_dir)
+    # 3. Initialize LXMF Router (The Sideband way)
+    # We add a small 1s delay to ensure RNS background threads are ready
+    time.sleep(1)
+    log("Initializing LXMF Router (with isolation)...")
     
-    local_destination = router.register_delivery_destination(
-        local_identity, 
-        display_name="rnshello"
-    )
-    local_destination.set_delivery_callback(on_lxmf_delivery)
+    try:
+        # We pass the identity directly to the constructor for stability
+        router = LXMF.LXMRouter(
+            identity=local_identity,
+            storage_path=lxmf_storage_dir
+        )
+        log("LXMF Router instance created.")
+        
+        local_destination = router.register_delivery_destination(
+            local_identity, 
+            display_name="rnshello"
+        )
+        local_destination.set_delivery_callback(on_lxmf_delivery)
+        log("Destination registered.")
+        
+    except Exception as e:
+        log(f"CRITICAL ERROR during LXMF Init: {e}")
+        return "ERROR"
     
-    # 4. Handle BT connection if requested
     if bt_mac and len(bt_mac) > 10:
         connect_rnode_bluetooth(bt_mac)
 
     addr = RNS.hexrep(local_destination.hash, delimit=False)
-    log(f"Backend fully ready. Your Address is: {addr}")
-    
-    # Announce to the mesh
     local_destination.announce()
+    log(f"Backend fully ready. Address: {addr}")
+    
     return addr
 
 def connect_rnode_bluetooth(mac_address):
@@ -88,7 +109,6 @@ def send_text(dest_hex, text):
     try:
         dest_hash = bytes.fromhex(dest_hex)
         dest_id = RNS.Identity.recall(dest_hash)
-        # If identity not in mesh, we create a temporary one for delivery
         dest = RNS.Destination(dest_id, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
         lxm = LXMF.LXMessage(dest, local_destination, text, title="rnshello")
         router.handle_outbound(lxm)
