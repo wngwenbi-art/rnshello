@@ -2,9 +2,7 @@ package com.rnshello
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -17,7 +15,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
-import java.io.File
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.UUID
@@ -26,9 +23,8 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
     private lateinit var addressDisplay: TextView
     private lateinit var messageInput: EditText
-    private var destinationAddress: String = ""
     private var btSocket: BluetoothSocket? = null
-    private var lastBtError: String = "NO MAC SAVED"
+    private var tcpServer: ServerSocket? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,109 +50,68 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             val input = messageInput.text.toString().trim()
             if (input.startsWith("connect:")) {
                 val mac = input.substring(8).trim().uppercase()
-                // Use commit() and verify it
-                val saved = getSharedPreferences("rns_prefs", MODE_PRIVATE).edit().putString("last_mac", mac).commit()
-                if (saved) {
-                    Toast.makeText(this, "MAC $mac Saved. Restarting...", Toast.LENGTH_LONG).show()
-                    Thread { 
-                        Thread.sleep(1500)
-                        android.os.Process.killProcess(android.os.Process.myPid()) 
-                    }.start()
-                }
-            } else if (destinationAddress.isNotEmpty() && input.isNotEmpty()) {
-                Thread {
-                    try {
-                        Python.getInstance().getModule("rns_backend").callAttr("send_text", destinationAddress, input)
-                    } catch (e: Exception) { Log.e("RNS_HELLO", "Send Err: ${e.message}") }
-                }.start()
-                messageInput.setText("")
-            } else if (destinationAddress.isEmpty()) {
-                Toast.makeText(this, "Type dest:HEX_ADDRESS first", Toast.LENGTH_SHORT).show()
+                getSharedPreferences("rns_prefs", MODE_PRIVATE).edit().putString("last_mac", mac).commit()
+                Toast.makeText(this, "MAC Saved. RESTARTING...", Toast.LENGTH_SHORT).show()
+                Thread { Thread.sleep(1000); android.os.Process.killProcess(android.os.Process.myPid()) }.start()
             }
         }
     }
 
     private fun startStack() {
-        val prefs = getSharedPreferences("rns_prefs", MODE_PRIVATE)
-        val savedMac = prefs.getString("last_mac", "") ?: ""
+        val savedMac = getSharedPreferences("rns_prefs", MODE_PRIVATE).getString("last_mac", "") ?: ""
 
         Thread {
             try {
-                var bridgeStatus = "false"
+                var useBridge = "false"
                 if (savedMac.isNotEmpty()) {
-                    if (startBtTcpBridge(savedMac)) {
-                        bridgeStatus = "true"
-                    }
+                    if (startBtTcpBridge(savedMac)) useBridge = "true"
                 }
 
-                if (!Python.isStarted()) {
-                    Python.start(AndroidPlatform(this@MainActivity))
-                }
-                
+                if (!Python.isStarted()) Python.start(AndroidPlatform(this@MainActivity))
                 val py = Python.getInstance()
                 py.getModule("os").get("environ")?.callAttr("__setitem__", "HOME", filesDir.absolutePath)
-                val rnsBackend = py.getModule("rns_backend")
                 
-                val myAddr = rnsBackend.callAttr("start_rns", filesDir.absolutePath, bridgeStatus, this@MainActivity).toString()
+                val myAddr = py.getModule("rns_backend").callAttr("start_rns", filesDir.absolutePath, useBridge, this@MainActivity).toString()
 
                 runOnUiThread { 
-                    val status = if (bridgeStatus == "true") "CONNECTED" else "ERR: $lastBtError"
-                    addressDisplay.text = "Addr: $myAddr\nBT ($savedMac): $status"
-                    if (savedMac.isEmpty()) {
-                        Toast.makeText(this@MainActivity, "Type connect:MAC_ADDRESS to start bridge", Toast.LENGTH_LONG).show()
-                    }
+                    addressDisplay.text = "Addr: $myAddr\nBridge: $useBridge ($savedMac)" 
                 }
-
             } catch (e: Exception) {
-                runOnUiThread { addressDisplay.text = "Error: ${e.message}" }
+                runOnUiThread { addressDisplay.text = "Init Error: ${e.message}" }
             }
         }.start()
     }
 
     private fun startBtTcpBridge(mac: String): Boolean {
         return try {
-            val adapter = BluetoothAdapter.getDefaultAdapter() ?: return false
+            val adapter = BluetoothAdapter.getDefaultAdapter()
             val device = adapter.getRemoteDevice(mac)
             
-            // SAMSUNG / RNODE FIX: 
-            // Instead of UUID, use Reflection to force a connection to RFCOMM Channel 1
-            // This bypasses the "Service Discovery Failed" error 99% of the time.
-            try {
-                val m = device.javaClass.getMethod("createInsecureRfcommSocket", Int::class.javaPrimitiveType)
-                btSocket = m.invoke(device, 1) as BluetoothSocket
-                btSocket?.connect()
-            } catch (e: Exception) {
-                // Fallback to standard UUID if reflection fails
-                val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-                btSocket = device.createInsecureRfcommSocketToServiceRecord(uuid)
-                btSocket?.connect()
-            }
+            // Forced Channel 1 Reflection (The Samsung/RNode standard)
+            val m = device.javaClass.getMethod("createInsecureRfcommSocket", Int::class.javaPrimitiveType)
+            btSocket = m.invoke(device, 1) as BluetoothSocket
+            btSocket?.connect()
 
-            val server = ServerSocket(4321)
-            server.reuseAddress = true
+            // Open Port 7633 as required by RNodeInterface.py
+            tcpServer = ServerSocket(7633)
+            tcpServer?.reuseAddress = true
+
             Thread {
-                try {
-                    val client = server.accept()
-                    val btIn = btSocket?.inputStream
-                    val btOut = btSocket?.outputStream
-                    val tcpIn = client?.inputStream
-                    val tcpOut = client?.outputStream
+                val client = tcpServer?.accept()
+                val btIn = btSocket?.inputStream
+                val btOut = btSocket?.outputStream
+                val tcpIn = client?.inputStream
+                val tcpOut = client?.outputStream
 
-                    val t1 = Thread { try { tcpIn?.copyTo(btOut!!) } catch (e: Exception) {} }
-                    val t2 = Thread { try { btIn?.copyTo(tcpOut!!) } catch (e: Exception) {} }
-                    t1.start()
-                    t2.start()
-                } catch (e: Exception) {}
+                Thread { try { tcpIn?.copyTo(btOut!!) } catch (e: Exception) {} }.start()
+                Thread { try { btIn?.copyTo(tcpOut!!) } catch (e: Exception) {} }.start()
             }.start()
             true
-        } catch (e: Exception) {
-            lastBtError = e.message ?: "Unknown Connection Error"
-            false
-        }
+        } catch (e: Exception) { false }
     }
 
     override fun onTextReceived(senderHash: String, text: String) {
-        runOnUiThread { Toast.makeText(this, "LXM: $text", Toast.LENGTH_LONG).show() }
+        runOnUiThread { Toast.makeText(this, "Msg: $text", Toast.LENGTH_LONG).show() }
     }
     override fun onImageReceived(senderHash: String, imagePath: String) {}
 }

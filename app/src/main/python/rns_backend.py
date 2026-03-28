@@ -1,42 +1,18 @@
 import os
 import sys
 import time
-from types import ModuleType
-import importlib.util
-import importlib.machinery
+import platform
 
-# --- ADVANCED ANDROID BYPASS MOCKS ---
-# Reticulum aggressively checks for Sideband-specific USB libraries on Android
-# even when using a TCP bridge. We mock them so it passes the initialization gatekeeper.
-
-class DummyJniusObj:
-    def __getattr__(self, name): return DummyJniusObj()
-    def __call__(self, *args, **kwargs): return DummyJniusObj()
-
-# 1. Mock usbserial4a
-mock_usb = ModuleType("usbserial4a")
-mock_usb.__spec__ = importlib.machinery.ModuleSpec("usbserial4a", None)
-mock_usb.get_ports_list = lambda: []
-mock_usb.get_port_dict = lambda: {}
-sys.modules["usbserial4a"] = mock_usb
-
-# 2. Mock jnius
-mock_jnius = ModuleType("jnius")
-mock_jnius.__spec__ = importlib.machinery.ModuleSpec("jnius", None)
-mock_jnius.autoclass = lambda x: DummyJniusObj()
-sys.modules["jnius"] = mock_jnius
-
-# 3. Patch find_spec
-_orig_find_spec = importlib.util.find_spec
-def _mock_find_spec(name, package=None):
-    if name == "usbserial4a": return mock_usb.__spec__
-    if name == "jnius": return mock_jnius.__spec__
-    return _orig_find_spec(name, package)
-importlib.util.find_spec = _mock_find_spec
-# -------------------------------------
-
+# --- THE COLUMBA PLATFORM HIJACK ---
+# We must trick Reticulum into thinking it is NOT on Android.
+# This disables the hardcoded check for Kivy-only 'usbserial4a' and 'jnius' libs.
 import RNS
+RNS.vendor.platformutils.is_android = lambda: False
+platform.system = lambda: "Linux"
+# -----------------------------------
+
 import LXMF
+from LXMF import LXMRouter, LXMessage
 
 router = None
 local_identity = None
@@ -51,31 +27,23 @@ def start_rns(storage_path, use_bridge, callback_obj):
     global router, local_identity, local_destination, kotlin_ui_callback
     kotlin_ui_callback = callback_obj
     
-    bridge_enabled = str(use_bridge).lower() == "true"
-    
     os.environ["TMPDIR"] = os.path.join(str(storage_path), "tmp")
     if not os.path.exists(os.environ["TMPDIR"]): os.makedirs(os.environ["TMPDIR"])
 
     rns_config_dir = os.path.join(str(storage_path), ".reticulum")
     if not os.path.exists(rns_config_dir): os.makedirs(rns_config_dir)
 
-    config_path = os.path.join(rns_config_dir, "config")
-    
+    # Building the config exactly as Columba does for Networked RNodes
     bridge_config = ""
-    if bridge_enabled:
-        log("ADDING RNODE TCP BRIDGE TO CONFIG")
+    if str(use_bridge).lower() == "true":
+        log("Tuning RNode via Kotlin TCP-Bluetooth Bridge...")
         bridge_config = """
-  [[Android TCP Bridge]]
+  [[Android RNode Bridge]]
     type = RNodeInterface
     interface_enabled = True
     outgoing = True
-    port = tcp://127.0.0.1:4321
-    frequency = 433000000
-    bandwidth = 125000
-    txpower = 2
-    spreadingfactor = 7
-    codingrate = 5
-    flow_control = False
+    # Sideband's TCP RNode driver uses port 7633 by default
+    tcp_host = 127.0.0.1
 """
 
     full_config = f"""[reticulum]
@@ -88,10 +56,10 @@ share_instance = Yes
     interface_enabled = False
 {bridge_config}
 """
-    with open(config_path, "w") as f:
+    with open(os.path.join(rns_config_dir, "config"), "w") as f:
         f.write(full_config)
 
-    log("Starting Reticulum Stack...")
+    log("Starting Reticulum...")
     RNS.Reticulum(configdir=rns_config_dir)
     
     identity_path = os.path.join(rns_config_dir, "storage_identity")
@@ -101,14 +69,14 @@ share_instance = Yes
         local_identity = RNS.Identity()
         local_identity.to_file(identity_path)
 
-    log("Starting LXMF Router...")
-    router = LXMF.LXMRouter(identity=local_identity, storagepath=os.path.join(str(storage_path), ".lxmf"))
+    log("Starting LXMF...")
+    router = LXMRouter(identity=local_identity, storagepath=os.path.join(str(storage_path), ".lxmf"))
     local_destination = router.register_delivery_identity(local_identity, display_name="rnshello")
     router.register_delivery_callback(on_lxmf_delivery)
     
     addr = RNS.hexrep(local_destination.hash, delimit=False)
     local_destination.announce()
-    log(f"Backend Ready. Address: {addr}")
+    log(f"RNS Online: {addr}")
     return addr
 
 def on_lxmf_delivery(lxm):
@@ -117,14 +85,14 @@ def on_lxmf_delivery(lxm):
         content = lxm.content.decode("utf-8")
         if kotlin_ui_callback:
             kotlin_ui_callback.onTextReceived(sender, content)
-    except Exception as e: pass
+    except: pass
 
 def send_text(dest_hex, text):
     try:
         dest_hash = bytes.fromhex(dest_hex)
         dest_id = RNS.Identity.recall(dest_hash)
         dest = RNS.Destination(dest_id, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
-        lxm = LXMF.LXMessage(dest, local_destination, text, title="rnshello")
+        lxm = LXMessage(dest, local_destination, text, title="rnshello")
         router.handle_outbound(lxm)
         return True
-    except Exception as e: return False
+    except: return False
