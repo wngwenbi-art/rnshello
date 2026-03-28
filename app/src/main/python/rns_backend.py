@@ -2,7 +2,7 @@ import os, sys, time, base64, platform
 from types import ModuleType
 import importlib.util, importlib.machinery
 
-# --- SIDEBAND/COLUMBA COMPATIBILITY MOCKS ---
+# --- SIDEBAND/COLUMBA MOCKS ---
 class Dummy:
     def __getattr__(self, name): return Dummy()
     def __call__(self, *args, **kwargs): return Dummy()
@@ -36,7 +36,7 @@ def log(msg):
     print(f"RNS-LOG: {msg}")
     sys.stdout.flush()
 
-def start_rns(storage_path, use_bridge, callback_obj):
+def start_rns(storage_path, callback_obj):
     global router, local_identity, local_destination, kotlin_ui_callback
     kotlin_ui_callback = callback_obj
     
@@ -47,16 +47,8 @@ def start_rns(storage_path, use_bridge, callback_obj):
     rns_config_dir = os.path.join(str(storage_path), ".reticulum")
     if not os.path.exists(rns_config_dir): os.makedirs(rns_config_dir)
 
-    bridge_config = ""
-    if str(use_bridge).lower() == "true":
-        bridge_config = """
-  [[Android RNode Bridge]]
-    type = RNodeInterface
-    interface_enabled = True
-    outgoing = True
-    tcp_host = 127.0.0.1
-"""
-    full_config = f"[reticulum]\nenable_transport = True\nshare_instance = Yes\n\n[interfaces]\n  [[Auto Interface]]\n    type = AutoInterface\n    interface_enabled = False\n{bridge_config}"
+    # Clean config
+    full_config = "[reticulum]\nenable_transport = True\nshare_instance = Yes\n\n[interfaces]\n  [[Auto Interface]]\n    type = AutoInterface\n    interface_enabled = False"
     with open(os.path.join(rns_config_dir, "config"), "w") as f: f.write(full_config)
 
     RNS.Reticulum(configdir=rns_config_dir)
@@ -76,34 +68,44 @@ def start_rns(storage_path, use_bridge, callback_obj):
     local_destination.announce()
     return addr
 
+def inject_rnode():
+    log("Hot-Injecting RNode Interface...")
+    try:
+        ictx = {
+            "name": "Android RNode Bridge",
+            "type": "RNodeInterface",
+            "interface_enabled": True,
+            "outgoing": True,
+            "tcp_host": "127.0.0.1",
+            "frequency": 433000000,
+            "bandwidth": 125000,
+            "txpower": 2,
+            "spreadingfactor": 7,
+            "codingrate": 5
+        }
+        RNS.Transport.setup_interface(ictx)
+        log("Interface injection successful.")
+        return True
+    except Exception as e:
+        log(f"Injection failed: {e}")
+        return False
+
 def on_announce(aspect_filter, data, announce_identity, announce_destination):
     dest_hash = RNS.hexrep(announce_destination.hash, delimit=False)
+    log(f"Heard announce from {dest_hash}")
     if kotlin_ui_callback: kotlin_ui_callback.onAnnounceReceived(dest_hash)
 
 def on_lxmf_delivery(lxm):
     sender = RNS.hexrep(lxm.source_hash, delimit=False)
     content = lxm.content.decode("utf-8")
-    
-    # Image detection like Sideband/Columba
     if content.startswith("IMG:"):
         try:
-            log(f"Processing incoming WebP from {sender}")
-            base64_data = content[4:]
-            img_bytes = base64.b64decode(base64_data)
-            
-            # Save to cache folder so Kotlin can read it
-            file_name = f"received_{int(time.time())}.webp"
-            file_path = os.path.join(os.environ["TMPDIR"], file_name)
-            with open(file_path, "wb") as f:
-                f.write(img_bytes)
-            
-            if kotlin_ui_callback:
-                kotlin_ui_callback.onImageReceived(sender, file_path)
-        except Exception as e:
-            log(f"Image decode failed: {e}")
+            file_path = os.path.join(os.environ["TMPDIR"], f"rec_{int(time.time())}.webp")
+            with open(file_path, "wb") as f: f.write(base64.b64decode(content[4:]))
+            if kotlin_ui_callback: kotlin_ui_callback.onImageReceived(sender, file_path)
+        except: pass
     else:
-        if kotlin_ui_callback:
-            kotlin_ui_callback.onTextReceived(sender, content)
+        if kotlin_ui_callback: kotlin_ui_callback.onTextReceived(sender, content)
 
 def send_text(dest_hex, text):
     try:
@@ -117,15 +119,11 @@ def send_text(dest_hex, text):
 
 def send_image(dest_hex, file_path):
     try:
-        log(f"Reading WebP file for transmission: {file_path}")
-        with open(file_path, "rb") as f:
-            encoded = base64.b64encode(f.read()).decode("utf-8")
-        
-        payload = f"IMG:{encoded}"
-        return send_text(dest_hex, payload)
-    except Exception as e:
-        log(f"Transmit failed: {e}")
-        return False
+        with open(file_path, "rb") as f: encoded = base64.b64encode(f.read()).decode("utf-8")
+        return send_text(dest_hex, f"IMG:{encoded}")
+    except: return False
 
 def announce_now():
-    if local_destination: local_destination.announce()
+    if local_destination: 
+        log("Manual Broadcast Triggered")
+        local_destination.announce()
