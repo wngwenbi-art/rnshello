@@ -5,22 +5,35 @@ from types import ModuleType
 import importlib.util
 import importlib.machinery
 
-# --- THE ULTIMATE MOCK 2.0 ---
-# We create a flawless fake module with a ModuleSpec so find_spec doesn't crash
+# --- ADVANCED ANDROID BYPASS MOCKS ---
+# Reticulum aggressively checks for Sideband-specific USB libraries on Android
+# even when using a TCP bridge. We mock them so it passes the initialization gatekeeper.
+
+class DummyJniusObj:
+    def __getattr__(self, name): return DummyJniusObj()
+    def __call__(self, *args, **kwargs): return DummyJniusObj()
+
+# 1. Mock usbserial4a
 mock_usb = ModuleType("usbserial4a")
 mock_usb.__spec__ = importlib.machinery.ModuleSpec("usbserial4a", None)
-mock_usb.get_ports_list = lambda:[]
+mock_usb.get_ports_list = lambda: []
 mock_usb.get_port_dict = lambda: {}
 sys.modules["usbserial4a"] = mock_usb
 
-# Monkey-patch find_spec to return our fake spec gracefully
+# 2. Mock jnius
+mock_jnius = ModuleType("jnius")
+mock_jnius.__spec__ = importlib.machinery.ModuleSpec("jnius", None)
+mock_jnius.autoclass = lambda x: DummyJniusObj()
+sys.modules["jnius"] = mock_jnius
+
+# 3. Patch find_spec
 _orig_find_spec = importlib.util.find_spec
 def _mock_find_spec(name, package=None):
-    if name == "usbserial4a":
-        return mock_usb.__spec__
+    if name == "usbserial4a": return mock_usb.__spec__
+    if name == "jnius": return mock_jnius.__spec__
     return _orig_find_spec(name, package)
 importlib.util.find_spec = _mock_find_spec
-# -----------------------------
+# -------------------------------------
 
 import RNS
 import LXMF
@@ -51,7 +64,6 @@ def start_rns(storage_path, use_bridge, callback_obj):
     bridge_config = ""
     if bridge_enabled:
         log("ADDING RNODE TCP BRIDGE TO CONFIG")
-        # RNodeInterface natively handles "tcp://" by completely skipping the USB check!
         bridge_config = """
   [[Android TCP Bridge]]
     type = RNodeInterface
@@ -73,7 +85,7 @@ share_instance = Yes
 [interfaces]
   [[Auto Interface]]
     type = AutoInterface
-    interface_enabled = True
+    interface_enabled = False
 {bridge_config}
 """
     with open(config_path, "w") as f:
