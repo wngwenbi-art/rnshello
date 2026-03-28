@@ -25,8 +25,6 @@ def start_rns(storage_path, use_bridge, callback_obj):
 
     config_path = os.path.join(rns_config_dir, "config")
     
-    # Python connects to the Kotlin TCP bridge instead of a Serial port
-    # PySerial requires the 'socket://' prefix to read TCP like a serial port!
     bridge_config = ""
     if use_bridge == "true":
         log("Configuring TCP-to-Bluetooth Bridge Interface...")
@@ -38,9 +36,12 @@ def start_rns(storage_path, use_bridge, callback_obj):
     port = socket://127.0.0.1:4321
 """
 
+    # FIXED THE SPACING HERE! Added double newlines so [interfaces] is on its own block.
     full_config = f"""[reticulum]
 enable_transport = True
-share_instance = Yes[interfaces]
+share_instance = Yes
+
+[interfaces]
   [[Auto Interface]]
     type = AutoInterface
     interface_enabled = True
@@ -60,10 +61,9 @@ share_instance = Yes[interfaces]
         local_identity.to_file(identity_path)
 
     log("Starting LXMF Router...")
-    # Clean, modern LXMF API Calls
     router = LXMF.LXMRouter(identity=local_identity, storagepath=os.path.join(str(storage_path), ".lxmf"))
     local_destination = router.register_delivery_identity(local_identity, display_name="rnshello")
-    local_destination.set_delivery_callback(on_lxmf_delivery)
+    router.register_delivery_callback(on_lxmf_delivery)
     
     addr = RNS.hexrep(local_destination.hash, delimit=False)
     local_destination.announce()
