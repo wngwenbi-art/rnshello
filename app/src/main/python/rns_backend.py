@@ -17,12 +17,11 @@ def start_rns(storage_path, bt_mac, callback_obj):
     global router, local_identity, local_destination, kotlin_ui_callback
     kotlin_ui_callback = callback_obj
     
-    # --- CRITICAL ANDROID FIX: Set TMPDIR for SQLite ---
+    # Set TMPDIR for SQLite stability on Android
     temp_dir = os.path.join(str(storage_path), "tmp")
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
     os.environ["TMPDIR"] = temp_dir
-    # ---------------------------------------------------
 
     log("Initializing Reticulum...")
     rns_config_dir = os.path.join(str(storage_path), ".reticulum")
@@ -46,16 +45,15 @@ def start_rns(storage_path, bt_mac, callback_obj):
         local_identity.to_file(identity_path)
         log("Identity generated.")
 
-    # 3. Initialize LXMF Router (The Sideband way)
-    # We add a small 1s delay to ensure RNS background threads are ready
+    # 3. Initialize LXMF Router
     time.sleep(1)
-    log("Initializing LXMF Router (with isolation)...")
+    log("Initializing LXMF Router...")
     
     try:
-        # We pass the identity directly to the constructor for stability
+        # CORRECTED: 'storagepath' instead of 'storage_path'
         router = LXMF.LXMRouter(
             identity=local_identity,
-            storage_path=lxmf_storage_dir
+            storagepath=lxmf_storage_dir
         )
         log("LXMF Router instance created.")
         
@@ -68,7 +66,7 @@ def start_rns(storage_path, bt_mac, callback_obj):
         
     except Exception as e:
         log(f"CRITICAL ERROR during LXMF Init: {e}")
-        return "ERROR"
+        return f"ERROR: {e}"
     
     if bt_mac and len(bt_mac) > 10:
         connect_rnode_bluetooth(bt_mac)
@@ -109,6 +107,7 @@ def send_text(dest_hex, text):
     try:
         dest_hash = bytes.fromhex(dest_hex)
         dest_id = RNS.Identity.recall(dest_hash)
+        # If identity not found, LXMF will try to announce/discover
         dest = RNS.Destination(dest_id, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
         lxm = LXMF.LXMessage(dest, local_destination, text, title="rnshello")
         router.handle_outbound(lxm)
