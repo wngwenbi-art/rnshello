@@ -31,14 +31,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-chaquopy-
 
-      # Generate the wrapper in an empty folder to bypass the Gradle 9 crash
+      # THE FIX: Create an empty settings file so Gradle 9 doesn't look at the main app
       - name: Generate Gradle Wrapper
         run: |
           mkdir temp_wrap
           cd temp_wrap
+          touch settings.gradle
           gradle wrapper --gradle-version 8.4
           cd ..
-          mv temp_wrap/gradle temp_wrap/gradlew temp_wrap/gradlew.bat .
+          mv temp_wrap/gradle .
+          mv temp_wrap/gradlew .
+          mv temp_wrap/gradlew.bat .
           rm -rf temp_wrap
 
       - name: Grant execute permission for gradlew
