@@ -1,3 +1,4 @@
+
 package com.rnshello
 
 import android.Manifest
@@ -20,41 +21,13 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     private lateinit var messageInput: EditText
     private var destinationAddress: String = ""
 
-    private fun connectToRNode(mac: String) {
-    Toast.makeText(this, "Saving MAC and Restarting RNS...", Toast.LENGTH_LONG).show()
-    
-    // Save the MAC address to a local file so it persists
-    val prefs = getSharedPreferences("rns_prefs", MODE_PRIVATE)
-    prefs.edit().putString("last_mac", mac).apply()
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
 
-    // Restart the activity to reload Python with the new config
-    val intent = intent
-    finish()
-    startActivity(intent)
-}
-
-private fun initRns() {
-    val prefs = getSharedPreferences("rns_prefs", MODE_PRIVATE)
-    val savedMac = prefs.getString("last_mac", "") ?: ""
-
-    Thread {
-        try {
-            if (!Python.isStarted()) {
-                Python.start(AndroidPlatform(this))
-            }
-            val py = Python.getInstance()
-            val rnsBackend = py.getModule("rns_backend")
-            
-            // Pass the savedMac into start_rns
-            val myAddr = rnsBackend.callAttr("start_rns", filesDir.absolutePath, savedMac, this).toString()
-
-            runOnUiThread { addressDisplay.text = "My Address: $myAddr\nBT: $savedMac" }
-        } catch (e: Exception) {
-            Log.e("RNS_HELLO", "Init Error: ${e.message}")
-        }
-    }.start()
-}
-
+        addressDisplay = findViewById(R.id.addressDisplay)
+        messageInput = findViewById(R.id.messageInput)
+        val btnSend = findViewById<Button>(R.id.btnSend)
 
         // Request permissions for Bluetooth (RNode)
         val permissions = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -92,43 +65,36 @@ private fun initRns() {
     }
 
     private fun initRns() {
-        Thread {
-            try {
-                if (!Python.isStarted()) {
-                    Python.start(AndroidPlatform(this))
-                }
-                val py = Python.getInstance()
-                val os = py.getModule("os")
-                os.get("environ")?.callAttr("__setitem__", "HOME", filesDir.absolutePath)
+    val prefs = getSharedPreferences("rns_prefs", MODE_PRIVATE)
+    val savedMac = prefs.getString("last_mac", "") ?: ""
 
-                val rnsBackend = py.getModule("rns_backend")
-                val myAddr = rnsBackend.callAttr("start_rns", filesDir.absolutePath, "", this).toString()
-
-                runOnUiThread { addressDisplay.text = "My Address: $myAddr" }
-            } catch (e: Exception) {
-                Log.e("RNS_HELLO", "Init Error: ${e.message}")
+    Thread {
+        try {
+            if (!Python.isStarted()) {
+                Python.start(AndroidPlatform(this))
             }
-        }.start()
-    }
+            val py = Python.getInstance()
+            val rnsBackend = py.getModule("rns_backend")
+            
+            // Pass the savedMac into start_rns
+            val myAddr = rnsBackend.callAttr("start_rns", filesDir.absolutePath, savedMac, this).toString()
 
-    private fun connectToRNode(mac: String) {
-        Thread {
-            try {
-                val py = Python.getInstance()
-                val rnsBackend = py.getModule("rns_backend")
-                val success = rnsBackend.callAttr("connect_rnode_bluetooth", mac).toBoolean()
-                runOnUiThread {
-                    Toast.makeText(this, if(success) "BT Command Sent" else "BT Error", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Log.e("RNS_HELLO", "BT Call Error: ${e.message}")
-            }
-        }.start()
-    }
-
-    override fun onTextReceived(senderHash: String, text: String) {
-        runOnUiThread { Toast.makeText(this, "From $senderHash: $text", Toast.LENGTH_LONG).show() }
-    }
-
-    override fun onImageReceived(senderHash: String, imagePath: String) {}
+            runOnUiThread { addressDisplay.text = "My Address: $myAddr\nBT: $savedMac" }
+        } catch (e: Exception) {
+            Log.e("RNS_HELLO", "Init Error: ${e.message}")
+        }
+    }.start()
 }
+private fun connectToRNode(mac: String) {
+    Toast.makeText(this, "Saving MAC and Restarting RNS...", Toast.LENGTH_LONG).show()
+    
+    // Save the MAC address to a local file so it persists
+    val prefs = getSharedPreferences("rns_prefs", MODE_PRIVATE)
+    prefs.edit().putString("last_mac", mac).apply()
+
+    // Restart the activity to reload Python with the new config
+    val intent = intent
+    finish()
+    startActivity(intent)
+}
+    
