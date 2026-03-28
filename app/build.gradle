@@ -44,6 +44,7 @@ chaquopy {
             install "rns"
             install "lxmf"
             install "pyserial"
+	    install "cryptography" 
         }
     }
 }
