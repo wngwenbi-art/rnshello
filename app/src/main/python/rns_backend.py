@@ -2,7 +2,7 @@ import os
 import sys
 import time
 import RNS
-from LXMF import LXMRouter, LXMessage, LXMessageDestination
+import LXMF
 
 router = None
 local_identity = None
@@ -26,6 +26,7 @@ def start_rns(storage_path, use_bridge, callback_obj):
     config_path = os.path.join(rns_config_dir, "config")
     
     # Python connects to the Kotlin TCP bridge instead of a Serial port
+    # PySerial requires the 'socket://' prefix to read TCP like a serial port!
     bridge_config = ""
     if use_bridge == "true":
         log("Configuring TCP-to-Bluetooth Bridge Interface...")
@@ -34,14 +35,12 @@ def start_rns(storage_path, use_bridge, callback_obj):
     type = RNodeInterface
     interface_enabled = True
     outgoing = True
-    port = tcp://127.0.0.1:4321
+    port = socket://127.0.0.1:4321
 """
 
     full_config = f"""[reticulum]
 enable_transport = True
-share_instance = Yes
-
-[interfaces]
+share_instance = Yes[interfaces]
   [[Auto Interface]]
     type = AutoInterface
     interface_enabled = True
@@ -61,9 +60,10 @@ share_instance = Yes
         local_identity.to_file(identity_path)
 
     log("Starting LXMF Router...")
-    router = LXMRouter(identity=local_identity, storagepath=os.path.join(str(storage_path), ".lxmf"))
+    # Clean, modern LXMF API Calls
+    router = LXMF.LXMRouter(identity=local_identity, storagepath=os.path.join(str(storage_path), ".lxmf"))
     local_destination = router.register_delivery_identity(local_identity, display_name="rnshello")
-    router.register_delivery_callback(on_lxmf_delivery)
+    local_destination.set_delivery_callback(on_lxmf_delivery)
     
     addr = RNS.hexrep(local_destination.hash, delimit=False)
     local_destination.announce()
@@ -84,7 +84,7 @@ def send_text(dest_hex, text):
         dest_hash = bytes.fromhex(dest_hex)
         dest_id = RNS.Identity.recall(dest_hash)
         dest = RNS.Destination(dest_id, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
-        lxm = LXMessage(dest, local_destination, text, title="rnshello")
+        lxm = LXMF.LXMessage(dest, local_destination, text, title="rnshello")
         router.handle_outbound(lxm)
         return True
     except Exception as e:
