@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.MaterialComponents.DayNight.NoActionBar" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="colorPrimary">#6200EE</item>
+        <item name="colorSecondary">#03DAC6</item>
+    </style>
+</resources>
