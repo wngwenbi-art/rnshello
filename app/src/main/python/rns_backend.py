@@ -1,8 +1,8 @@
-import os, sys, time, platform
+import os, sys, time, base64, platform
 from types import ModuleType
 import importlib.util, importlib.machinery
 
-# --- THE ULTIMATE MOCK (KEEP THIS) ---
+# --- THE SIDEBAND/COLUMBA MOCKS ---
 class Dummy:
     def __getattr__(self, name): return Dummy()
     def __call__(self, *args, **kwargs): return Dummy()
@@ -21,7 +21,7 @@ def _mock_find_spec(name, package=None):
     if name in ["usbserial4a", "jnius"]: return sys.modules[name].__spec__
     return _orig_find_spec(name, package)
 importlib.util.find_spec = _mock_find_spec
-# -------------------------------------
+# ----------------------------------
 
 import RNS
 import LXMF
@@ -47,7 +47,6 @@ def start_rns(storage_path, use_bridge, callback_obj):
 
     bridge_config = ""
     if str(use_bridge).lower() == "true":
-        log("Configuring Bridge Interface...")
         bridge_config = """
   [[Android RNode Bridge]]
     type = RNodeInterface
@@ -74,36 +73,53 @@ def start_rns(storage_path, use_bridge, callback_obj):
     local_destination = router.register_delivery_identity(local_identity, display_name="rnshello")
     router.register_delivery_callback(on_lxmf_delivery)
     
+    # REGISTER ANNOUNCE HANDLER: This lets us discover others!
+    RNS.Transport.register_announce_handler(on_announce)
+    
     addr = RNS.hexrep(local_destination.hash, delimit=False)
-    # Announce on startup
     local_destination.announce()
     return addr
 
+def on_announce(aspect_filter, data, announce_identity, announce_destination):
+    # When we hear an announce, send the HEX address back to Kotlin
+    dest_hash = RNS.hexrep(announce_destination.hash, delimit=False)
+    if kotlin_ui_callback:
+        kotlin_ui_callback.onAnnounceReceived(dest_hash)
+
 def on_lxmf_delivery(lxm):
-    try:
-        sender = RNS.hexrep(lxm.source_hash, delimit=False)
-        content = lxm.content.decode("utf-8")
-        # Check if it is an image
-        if content.startswith("data:image"):
-            if kotlin_ui_callback: kotlin_ui_callback.onImageReceived(sender, content)
-        else:
-            if kotlin_ui_callback: kotlin_ui_callback.onTextReceived(sender, content)
-    except: pass
+    sender = RNS.hexrep(lxm.source_hash, delimit=False)
+    content = lxm.content.decode("utf-8")
+    
+    if content.startswith("IMG:"):
+        # We received an image payload
+        try:
+            img_data = content[4:]
+            img_bytes = base64.b64decode(img_data)
+            # Use fixed path in app cache
+            file_path = os.path.join(os.environ["TMPDIR"], f"rec_{sender}.webp")
+            with open(file_path, "wb") as f: f.write(img_bytes)
+            if kotlin_ui_callback: kotlin_ui_callback.onImageReceived(sender, file_path)
+        except: pass
+    else:
+        if kotlin_ui_callback: kotlin_ui_callback.onTextReceived(sender, content)
 
 def send_text(dest_hex, text):
     try:
         dest_hash = bytes.fromhex(dest_hex)
-        # Attempt to find the identity in the mesh path table
         dest_id = RNS.Identity.recall(dest_hash)
-        # If we don't know them, we create a generic destination to try and find them
         destination = RNS.Destination(dest_id, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
         lxm = LXMessage(destination, local_destination, text, title="rnshello")
         router.handle_outbound(lxm)
         return True
     except: return False
 
+def send_image(dest_hex, file_path):
+    try:
+        with open(file_path, "rb") as f:
+            encoded = base64.b64encode(f.read()).decode("utf-8")
+        payload = f"IMG:{encoded}"
+        return send_text(dest_hex, payload)
+    except: return False
+
 def announce_now():
-    if local_destination:
-        local_destination.announce()
-        return True
-    return False
+    if local_destination: local_destination.announce()
