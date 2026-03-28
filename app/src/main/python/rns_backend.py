@@ -1,18 +1,16 @@
 import os
 import sys
+import time
 from types import ModuleType
 
-# --- THE CRITICAL ANDROID BYPASS ---
-# We mock the usbserial4a module so Reticulum doesn't crash 
-# even if the library is missing from the APK path.
-try:
-    import usbserial4a
-except ImportError:
-    mock_usb = ModuleType("usbserial4a")
-    sys.modules["usbserial4a"] = mock_usb
-# -----------------------------------
+# --- ADVANCED MOCK ---
+# We must give Reticulum the exact functions it is looking for
+mock_usb = ModuleType("usbserial4a")
+mock_usb.get_ports_list = lambda: []
+mock_usb.get_port_dict = lambda: {}
+sys.modules["usbserial4a"] = mock_usb
+# ---------------------
 
-import time
 import RNS
 import LXMF
 
@@ -47,7 +45,7 @@ def start_rns(storage_path, use_bridge, callback_obj):
     type = RNodeInterface
     interface_enabled = True
     outgoing = True
-    port = socket://127.0.0.1:4321
+    port = tcp://127.0.0.1:4321
     frequency = 433000000
     bandwidth = 125000
     txpower = 2
