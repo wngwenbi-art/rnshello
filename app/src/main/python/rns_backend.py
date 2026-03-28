@@ -2,14 +2,25 @@ import os
 import sys
 import time
 from types import ModuleType
+import importlib.util
+import importlib.machinery
 
-# --- ADVANCED MOCK ---
-# We must give Reticulum the exact functions it is looking for
+# --- THE ULTIMATE MOCK 2.0 ---
+# We create a flawless fake module with a ModuleSpec so find_spec doesn't crash
 mock_usb = ModuleType("usbserial4a")
-mock_usb.get_ports_list = lambda: []
+mock_usb.__spec__ = importlib.machinery.ModuleSpec("usbserial4a", None)
+mock_usb.get_ports_list = lambda:[]
 mock_usb.get_port_dict = lambda: {}
 sys.modules["usbserial4a"] = mock_usb
-# ---------------------
+
+# Monkey-patch find_spec to return our fake spec gracefully
+_orig_find_spec = importlib.util.find_spec
+def _mock_find_spec(name, package=None):
+    if name == "usbserial4a":
+        return mock_usb.__spec__
+    return _orig_find_spec(name, package)
+importlib.util.find_spec = _mock_find_spec
+# -----------------------------
 
 import RNS
 import LXMF
@@ -40,6 +51,7 @@ def start_rns(storage_path, use_bridge, callback_obj):
     bridge_config = ""
     if bridge_enabled:
         log("ADDING RNODE TCP BRIDGE TO CONFIG")
+        # RNodeInterface natively handles "tcp://" by completely skipping the USB check!
         bridge_config = """
   [[Android TCP Bridge]]
     type = RNodeInterface
