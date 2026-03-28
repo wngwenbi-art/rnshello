@@ -17,6 +17,10 @@ def start_rns(storage_path, use_bridge, callback_obj):
     global router, local_identity, local_destination, kotlin_ui_callback
     kotlin_ui_callback = callback_obj
     
+    # Force string conversion and lowercase for comparison
+    bridge_enabled = str(use_bridge).lower() == "true"
+    log(f"start_rns called. Bridge enabled parameter: {bridge_enabled}")
+    
     os.environ["TMPDIR"] = os.path.join(str(storage_path), "tmp")
     if not os.path.exists(os.environ["TMPDIR"]): os.makedirs(os.environ["TMPDIR"])
 
@@ -25,10 +29,18 @@ def start_rns(storage_path, use_bridge, callback_obj):
 
     config_path = os.path.join(rns_config_dir, "config")
     
-    bridge_config = ""
-    if use_bridge == "true":
-        log("Configuring TCP-to-Bluetooth Bridge Interface...")
-        bridge_config = """
+    # Build Config
+    full_config = "[reticulum]\n"
+    full_config += "enable_transport = True\n"
+    full_config += "share_instance = Yes\n\n"
+    full_config += "[interfaces]\n"
+    full_config += "  [[Auto Interface]]\n"
+    full_config += "    type = AutoInterface\n"
+    full_config += "    interface_enabled = True\n"
+
+    if bridge_enabled:
+        log("ADDING RNODE TCP BRIDGE TO CONFIG")
+        full_config += """
   [[Android TCP Bridge]]
     type = RNodeInterface
     interface_enabled = True
@@ -42,16 +54,6 @@ def start_rns(storage_path, use_bridge, callback_obj):
     flow_control = False
 """
 
-    full_config = f"""[reticulum]
-enable_transport = True
-share_instance = Yes
-
-[interfaces]
-  [[Auto Interface]]
-    type = AutoInterface
-    interface_enabled = True
-{bridge_config}
-"""
     with open(config_path, "w") as f:
         f.write(full_config)
 

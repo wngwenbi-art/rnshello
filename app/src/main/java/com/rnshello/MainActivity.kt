@@ -75,18 +75,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 messageInput.setText("")
             }
         }
-
-        btnAttach.setOnClickListener {
-            val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
-            startActivityForResult(intent, 101)
-        }
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-            startStack()
-        }
     }
 
     private fun startStack() {
@@ -95,62 +83,57 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
         Thread {
             try {
-                var useBridge = "false"
+                var bridgeStatus = "false"
+                
                 if (savedMac.isNotEmpty()) {
-                    runOnUiThread { addressDisplay.text = "1. Connecting BT to $savedMac..." }
+                    runOnUiThread { Toast.makeText(this, "Attempting BT Bridge...", Toast.LENGTH_SHORT).show() }
+                    
                     if (startBtTcpBridge(savedMac)) {
-                        runOnUiThread { addressDisplay.text = "2. BT Connected! Starting Python..." }
-                        useBridge = "true"
+                        bridgeStatus = "true"
+                        runOnUiThread { Toast.makeText(this, "BT Bridge Active!", Toast.LENGTH_SHORT).show() }
                     } else {
-                        runOnUiThread { addressDisplay.text = "BT FAILED! Check pairing or power." }
-                        return@Thread 
+                        runOnUiThread { Toast.makeText(this, "BT Bridge Failed!", Toast.LENGTH_LONG).show() }
                     }
                 }
 
                 if (!Python.isStarted()) {
                     Python.start(AndroidPlatform(this@MainActivity))
                 }
+                
                 val py = Python.getInstance()
                 py.getModule("os").get("environ")?.callAttr("__setitem__", "HOME", filesDir.absolutePath)
-
                 val rnsBackend = py.getModule("rns_backend")
-                val myAddr = rnsBackend.callAttr("start_rns", filesDir.absolutePath, useBridge, this@MainActivity).toString()
+                
+                // CRITICAL: We pass the bridgeStatus as a clean string
+                val myAddr = rnsBackend.callAttr("start_rns", filesDir.absolutePath, bridgeStatus, this@MainActivity).toString()
 
-                runOnUiThread { addressDisplay.text = "My Address: $myAddr\nBT: $savedMac" }
+                runOnUiThread { addressDisplay.text = "My Address: $myAddr\nBridge: $bridgeStatus" }
 
             } catch (e: Exception) {
-                runOnUiThread { addressDisplay.text = "RNS Error: ${e.message}" }
+                runOnUiThread { addressDisplay.text = "Error: ${e.message}" }
             }
         }.start()
     }
 
     private fun startBtTcpBridge(mac: String): Boolean {
-        try {
-            val adapter = BluetoothAdapter.getDefaultAdapter() ?: throw Exception("No BT Adapter")
+        return try {
+            val adapter = BluetoothAdapter.getDefaultAdapter() ?: return false
             val device = adapter.getRemoteDevice(mac)
             val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
             
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                throw Exception("Missing Permission")
-            }
-            
-            try {
-                btSocket = device.createRfcommSocketToServiceRecord(uuid)
-                btSocket?.connect()
-            } catch (e: Exception) {
-                btSocket = device.createInsecureRfcommSocketToServiceRecord(uuid)
-                btSocket?.connect()
-            }
+            // Try Insecure for RNodes
+            btSocket = device.createInsecureRfcommSocketToServiceRecord(uuid)
+            btSocket?.connect()
 
             if (tcpServer != null && !tcpServer!!.isClosed) tcpServer!!.close()
             tcpServer = ServerSocket(4321)
             tcpServer?.reuseAddress = true
 
             Thread { bridgeData() }.start()
-            return true
+            true
         } catch (e: Exception) {
-            Log.e("RNS_HELLO", "BT Bridge Failed: ${e.message}")
-            return false
+            Log.e("RNS_HELLO", "Bridge Error: ${e.message}")
+            false
         }
     }
 
@@ -181,26 +164,17 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                     }
                 } catch (e: Exception) {}
             }.start()
-
         } catch (e: Exception) {}
     }
 
     private fun saveMacAndExit(mac: String) {
         getSharedPreferences("rns_prefs", MODE_PRIVATE).edit().putString("last_mac", mac).commit()
-        runOnUiThread { Toast.makeText(this, "MAC Saved! App closing...", Toast.LENGTH_LONG).show() }
-        Thread {
-            Thread.sleep(2000)
-            android.os.Process.killProcess(android.os.Process.myPid())
-        }.start()
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
+        runOnUiThread { Toast.makeText(this, "MAC Saved. RESTART APP!", Toast.LENGTH_LONG).show() }
+        Thread { Thread.sleep(1500); android.os.Process.killProcess(android.os.Process.myPid()) }.start()
     }
 
     override fun onTextReceived(senderHash: String, text: String) {
-        runOnUiThread { Toast.makeText(this, "From $senderHash: $text", Toast.LENGTH_LONG).show() }
+        runOnUiThread { Toast.makeText(this, "LXM: $text", Toast.LENGTH_LONG).show() }
     }
-
     override fun onImageReceived(senderHash: String, imagePath: String) {}
 }
