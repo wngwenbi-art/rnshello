@@ -22,8 +22,7 @@
             android:layout_height="wrap_content"
             android:textStyle="bold"
             android:textSize="12sp"
-            android:textColor="@color/colorPrimary"
-            android:text="SenderName" />
+            android:textColor="@color/colorPrimary" />
 
         <ImageView
             android:id="@+id/chatMessageImage"
@@ -31,7 +30,7 @@
             android:layout_height="150dp"
             android:scaleType="centerCrop"
             android:adjustViewBounds="true"
-            android:src="@drawable/default_image" /> <!-- Placeholder -->
+            android:src="@android:drawable/ic_menu_gallery" />
 
         <TextView
             android:id="@+id/chatMessageTime"
@@ -39,7 +38,6 @@
             android:layout_height="wrap_content"
             android:layout_gravity="end"
             android:textSize="10sp"
-            android:textColor="@android:color/darker_gray"
-            android:text="12:34" />
+            android:textColor="@android:color/darker_gray" />
     </LinearLayout>
 </LinearLayout>

@@ -26,26 +26,26 @@ import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
-import java.util.*
 
 class MainActivity : AppCompatActivity(), RnsCallback {
 
     private lateinit var addressDisplay: TextView
     private lateinit var messageInput: EditText
     private lateinit var btSpinner: Spinner
-    private lateinit var discoveredNodesListView: ListView // For discovered nodes
+    private lateinit var discoveredNodesListView: ListView
     private lateinit var discoveredNodesAdapter: ArrayAdapter<String>
     
-    private lateinit var chatRecyclerView: RecyclerView // For chat bubbles
+    private lateinit var chatRecyclerView: RecyclerView
     private lateinit var chatAdapter: ChatAdapter
     private lateinit var targetNodeInfo: TextView
 
     private val discoveredNodes = mutableListOf<String>()
     private var destinationAddress: String = ""
-    private var ownAddress: String = "" // Store own address
+    private var ownAddress: String = "" 
 
     private var btSocket: BluetoothSocket? = null
     private var tcpServer: ServerSocket? = null
+    private var tcpClient: Socket? = null
     private var isBridging = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,7 +64,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         val btnConnectBt = findViewById<Button>(R.id.btnConnectBt)
         val btnRefreshBt = findViewById<Button>(R.id.btnRefreshBt)
 
-        // Setup Discovered Nodes ListView
         discoveredNodesAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, discoveredNodes)
         discoveredNodesListView.adapter = discoveredNodesAdapter
         discoveredNodesListView.setOnItemClickListener { _, _, i, _ ->
@@ -73,12 +72,10 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             Toast.makeText(this, "Targeting: $destinationAddress", Toast.LENGTH_SHORT).show()
         }
 
-        // Setup Chat RecyclerView
         chatRecyclerView = findViewById(R.id.chatRecyclerView)
         chatAdapter = ChatAdapter()
         chatRecyclerView.layoutManager = LinearLayoutManager(this)
         chatRecyclerView.adapter = chatAdapter
-
 
         btnRefreshBt.setOnClickListener { updateBtSpinner() }
         
@@ -92,8 +89,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
         btnBroadcast.setOnClickListener {
             Thread { 
-                try {
-                    Python.getInstance().getModule("rns_backend").callAttr("announce_now") 
+                try { Python.getInstance().getModule("rns_backend").callAttr("announce_now") 
                 } catch (e: Exception) { Log.e("RNS", "Announce Err: ${e.message}") }
             }.start()
             Toast.makeText(this, "Broadcast Sent", Toast.LENGTH_SHORT).show()
@@ -106,8 +102,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 chatAdapter.addMessage(message)
                 chatRecyclerView.scrollToPosition(chatAdapter.itemCount - 1)
                 Thread { 
-                    try {
-                        Python.getInstance().getModule("rns_backend").callAttr("send_text", destinationAddress, input) 
+                    try { Python.getInstance().getModule("rns_backend").callAttr("send_text", destinationAddress, input) 
                     } catch (e: Exception) { Log.e("RNS", "Send Err: ${e.message}") }
                 }.start()
                 messageInput.setText("")
@@ -116,7 +111,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
         btnAttach.setOnClickListener {
             if (destinationAddress.isEmpty()) {
-                Toast.makeText(this, "Tap a node first!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Select a node first!", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
             startActivityForResult(Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI), 101)
@@ -125,31 +120,10 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         checkPermissions()
     }
 
-    private fun getPairedDevices(): List<BluetoothDevice> {
-        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return emptyList()
-        return if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            adapter.bondedDevices.toList()
-        } else emptyList()
-    }
-
     private fun updateBtSpinner() {
-        val adapter = BluetoothAdapter.getDefaultAdapter()
-        if (adapter == null) {
-            Toast.makeText(this, "No Bluetooth Hardware", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            Toast.makeText(this, "Permission Missing", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val bondedDevices = adapter.bondedDevices
-        if (bondedDevices.isEmpty()) {
-            Toast.makeText(this, "No paired RNodes found! Pair in Settings first.", Toast.LENGTH_LONG).show()
-        }
-        
-        val btNames = bondedDevices.map { "${it.name}\n${it.address}" }
+        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return
+        val btNames = adapter.bondedDevices.map { "${it.name}\n${it.address}" }
         btSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, btNames)
     }
 
@@ -159,21 +133,18 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 isBridging = false
                 btSocket?.close()
                 tcpServer?.close()
-                
+                tcpClient?.close()
                 val device = BluetoothAdapter.getDefaultAdapter().getRemoteDevice(mac)
                 val m = device.javaClass.getMethod("createInsecureRfcommSocket", Int::class.javaPrimitiveType)
                 btSocket = m.invoke(device, 1) as BluetoothSocket
                 btSocket?.connect()
-                
                 tcpServer = ServerSocket()
                 tcpServer?.reuseAddress = true
                 tcpServer?.bind(InetSocketAddress("127.0.0.1", 7633))
-                
                 isBridging = true
                 Thread { runBridgeLoop() }.start()
-
                 Python.getInstance().getModule("rns_backend").callAttr("inject_rnode")
-                runOnUiThread { Toast.makeText(this, "RNode Active @ 433.025 MHz", Toast.LENGTH_SHORT).show() }
+                runOnUiThread { Toast.makeText(this, "RNode Active", Toast.LENGTH_SHORT).show() }
             } catch (e: Exception) {
                 runOnUiThread { Toast.makeText(this, "BT Error: ${e.message}", Toast.LENGTH_LONG).show() }
             }
@@ -184,11 +155,11 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         while (isBridging) {
             try {
                 val client = tcpServer?.accept() ?: break
+                tcpClient = client
                 val btIn = btSocket?.inputStream
                 val btOut = btSocket?.outputStream
                 val tcpIn = client.inputStream
                 val tcpOut = client.outputStream
-
                 val t1 = Thread { 
                     try {
                         val buffer = ByteArray(1024)
@@ -199,7 +170,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                         }
                     } catch (e: Exception) {} finally { try { client.close() } catch (e: Exception) {} }
                 }
-                
                 val t2 = Thread { 
                     try {
                         val buffer = ByteArray(1024)
@@ -210,7 +180,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                         }
                     } catch (e: Exception) {} finally { try { client.close() } catch (e: Exception) {} }
                 }
-                
                 t1.start(); t2.start()
             } catch (e: Exception) { break }
         }
@@ -223,7 +192,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 val py = Python.getInstance()
                 py.getModule("os").get("environ")?.callAttr("__setitem__", "HOME", filesDir.absolutePath)
                 val addr = py.getModule("rns_backend").callAttr("start_rns", filesDir.absolutePath, this).toString()
-                ownAddress = addr // Store own address
+                ownAddress = addr
                 runOnUiThread { 
                     addressDisplay.text = "My Addr: $addr"
                     updateBtSpinner()
@@ -252,37 +221,53 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         runOnUiThread {
             if (!discoveredNodes.contains(hexAddress)) {
                 discoveredNodes.add(hexAddress)
-                discoveredNodesAdapter.notifyDataSetChanged() // Update the new list
+                discoveredNodesAdapter.notifyDataSetChanged()
             }
         }
     }
 
-    // New onNewMessage callback
-    override fun onNewMessage(message: Message) {
+    override fun onNewMessage(senderHash: String, content: String, timestamp: Long, isImage: Boolean, isSent: Boolean) {
+        val msg = Message(senderHash, content, timestamp, isImage, isSent)
         runOnUiThread {
-            chatAdapter.addMessage(message)
-            chatRecyclerView.scrollToPosition(chatAdapter.itemCount - 1) // Auto-scroll
+            chatAdapter.addMessage(msg)
+            chatRecyclerView.scrollToPosition(chatAdapter.itemCount - 1)
         }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 101 && resultCode == RESULT_OK && data != null && destinationAddress.isNotEmpty()) {
+        if (requestCode == 101 && resultCode == RESULT_OK && data != null) {
+            val uri = data.data ?: return
             Thread {
                 try {
-                    val stream = contentResolver.openInputStream(data.data!!)
-                    val tempFile = File(cacheDir, "out.webp")
+                    // --- THUMBNAIL CRUNCHER LOGIC ---
+                    val stream = contentResolver.openInputStream(uri)
+                    val original = BitmapFactory.decodeStream(stream)
+                    
+                    // 1. Calculate scaling to max 320px
+                    val scale = 320f / Math.max(original.width, original.height)
+                    val targetW = (original.width * scale).toInt()
+                    val targetH = (original.height * scale).toInt()
+                    
+                    // 2. Create scaled thumbnail
+                    val thumb = Bitmap.createScaledBitmap(original, targetW, targetH, true)
+                    
+                    // 3. Compress to WebP at 10% quality
+                    val tempFile = File(cacheDir, "thumb_out.webp")
                     val out = FileOutputStream(tempFile)
-                    BitmapFactory.decodeStream(stream)?.compress(Bitmap.CompressFormat.WEBP, 20, out)
+                    thumb.compress(Bitmap.CompressFormat.WEBP, 10, out)
                     out.close()
                     
+                    Log.d("RNS_HELLO", "Thumbnail generated: ${tempFile.length() / 1024} KB")
+
                     val message = Message(ownAddress, tempFile.absolutePath, System.currentTimeMillis(), true, true)
                     runOnUiThread {
                         chatAdapter.addMessage(message)
                         chatRecyclerView.scrollToPosition(chatAdapter.itemCount - 1)
                     }
+                    
                     Python.getInstance().getModule("rns_backend").callAttr("send_image", destinationAddress, tempFile.absolutePath)
-                } catch (e: Exception) { Log.e("RNS_HELLO", "Img Err: ${e.message}") }
+                } catch (e: Exception) { Log.e("RNS_HELLO", "Cruncher failed: ${e.message}") }
             }.start()
         }
     }

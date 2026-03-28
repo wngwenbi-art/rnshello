@@ -22,7 +22,7 @@
             android:layout_height="150dp"
             android:scaleType="centerCrop"
             android:adjustViewBounds="true"
-            android:src="@drawable/default_image" /> <!-- Placeholder -->
+            android:src="@android:drawable/ic_menu_gallery" />
 
         <TextView
             android:id="@+id/chatMessageTime"
@@ -30,7 +30,6 @@
             android:layout_height="wrap_content"
             android:layout_gravity="end"
             android:textSize="10sp"
-            android:textColor="@android:color/white"
-            android:text="12:34" />
+            android:textColor="@android:color/white" />
     </LinearLayout>
 </LinearLayout>
