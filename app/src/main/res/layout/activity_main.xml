@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp">
+
+    <!-- Your RNS Address -->
+    <TextView
+        android:id="@+id/addressDisplay"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="My Address: Loading..."
+        android:textStyle="bold"
+        android:layout_alignParentTop="true" />
+
+    <!-- Chat Area -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/chatRecyclerView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_above="@+id/inputArea"
+        android:layout_below="@id/addressDisplay"
+        android:layout_marginTop="10dp"
+        android:layout_marginBottom="10dp" />
+
+    <!-- Input Area -->
+    <LinearLayout
+        android:id="@+id/inputArea"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_alignParentBottom="true">
+
+        <EditText
+            android:id="@+id/messageInput"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:hint="Type message or Dest:Hex..." />
+
+        <Button
+            android:id="@+id/btnAttach"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="IMG" />
+
+        <Button
+            android:id="@+id/btnSend"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Send" />
+    </LinearLayout>
+</RelativeLayout>
