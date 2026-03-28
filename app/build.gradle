@@ -44,7 +44,8 @@ chaquopy {
             install "rns"
             install "lxmf"
             install "pyserial"
-	    install "cryptography" 
+            // THE CRITICAL FIX: Reticulum requires this on Android for RNodeInterface
+            install "usbserial4a"
         }
     }
 }
