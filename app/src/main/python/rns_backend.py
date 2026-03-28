@@ -1,8 +1,13 @@
 import os
 import sys
-import RNS
-import LXMF
 import time
+import RNS
+
+# Explicit imports to avoid "AttributeError"
+import LXMF
+from LXMF import LXMRouter
+from LXMF import LXMessage
+from LXMF import LXMessageDestination
 
 router = None
 local_identity = None
@@ -17,7 +22,7 @@ def start_rns(storage_path, bt_mac, callback_obj):
     global router, local_identity, local_destination, kotlin_ui_callback
     kotlin_ui_callback = callback_obj
     
-    # Set TMPDIR for SQLite stability on Android
+    # Android SQLite stability
     temp_dir = os.path.join(str(storage_path), "tmp")
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
@@ -46,37 +51,38 @@ def start_rns(storage_path, bt_mac, callback_obj):
         log("Identity generated.")
 
     # 3. Initialize LXMF Router
-    time.sleep(1)
+    time.sleep(0.5)
     log("Initializing LXMF Router...")
     
     try:
-        router = LXMF.LXMRouter(
+        # Initialize Router first
+        router = LXMRouter(
             identity=local_identity,
             storagepath=lxmf_storage_dir
         )
         log("LXMF Router instance created.")
         
-        # CORRECTED: Use LXMessageDestination instead of register_delivery_destination
-        local_destination = LXMF.LXMessageDestination(
+        # 4. Create the Destination (Sideband Style)
+        # In LXMF, a Destination needs an identity and a router reference
+        local_destination = LXMessageDestination(
             local_identity,
             router,
             "rnshello"
         )
         
-        # Set the callback on the destination object
+        # Set the callback
         local_destination.set_delivery_callback(on_lxmf_delivery)
         log("LXMF Destination registered.")
         
     except Exception as e:
         log(f"CRITICAL ERROR during LXMF Init: {e}")
+        # Fallback to just RNS address if LXMF fails
         return f"ERROR: {e}"
     
     if bt_mac and len(bt_mac) > 10:
         connect_rnode_bluetooth(bt_mac)
 
     addr = RNS.hexrep(local_destination.hash, delimit=False)
-    
-    # Manual announcement to trigger mesh visibility
     local_destination.announce()
     log(f"Backend fully ready. Address: {addr}")
     
@@ -102,9 +108,8 @@ def connect_rnode_bluetooth(mac_address):
 def on_lxmf_delivery(lxm):
     try:
         sender = RNS.hexrep(lxm.source_hash, delimit=False)
-        # LXMF content is already bytes, decode to string
         content = lxm.content.decode("utf-8")
-        log(f"Received LXM from {sender}")
+        log(f"Received message from {sender}")
         if kotlin_ui_callback:
             kotlin_ui_callback.onTextReceived(sender, content)
     except Exception as e:
@@ -115,14 +120,12 @@ def send_text(dest_hex, text):
         dest_hash = bytes.fromhex(dest_hex)
         dest_id = RNS.Identity.recall(dest_hash)
         
-        # If we don't have the identity in the mesh yet, we might need an announcement first
-        # but LXMF handles much of this in the background
+        # Build outbound destination
         destination = RNS.Destination(dest_id, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
         
-        # Create LXMessage (Destination, Source, Content, Title)
-        lxm = LXMF.LXMessage(destination, local_destination, text, title="rnshello")
+        # Create LXMessage (Destination, Source, Content)
+        lxm = LXMF.LXMessage(destination, local_destination, text)
         
-        # Hand to router
         router.handle_outbound(lxm)
         log(f"Message sent to {dest_hex}")
         return True
