@@ -1,13 +1,9 @@
 package com.rnshello
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
-import android.provider.MediaStore
 import android.util.Log
 import android.widget.Button
 import android.widget.EditText
@@ -17,8 +13,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
-import java.io.File
-import java.io.FileOutputStream
 
 class MainActivity : AppCompatActivity(), RnsCallback {
 
@@ -33,13 +27,9 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         addressDisplay = findViewById(R.id.addressDisplay)
         messageInput = findViewById(R.id.messageInput)
         val btnSend = findViewById<Button>(R.id.btnSend)
-        val btnAttach = findViewById<Button>(R.id.btnAttach)
 
-        // 1. Request Permissions for Bluetooth (RNode) and Storage (Images)
-        val permissions = mutableListOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        )
+        // Request permissions for Bluetooth (RNode)
+        val permissions = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
             permissions.add(Manifest.permission.BLUETOOTH_SCAN)
@@ -51,54 +41,44 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             initRns()
         }
 
-        // 2. Send Button Logic (Handles Text and "connect:" command)
         btnSend.setOnClickListener {
             val input = messageInput.text.toString().trim()
-            if (input.startsWith("dest:")) {
-                destinationAddress = input.substring(5).trim()
-                Toast.makeText(this, "Dest set to: ", Toast.LENGTH_SHORT).show()
-                messageInput.setText("")
-            } else if (input.startsWith("connect:")) {
+            if (input.startsWith("connect:")) {
                 val mac = input.substring(8).trim()
                 connectToRNode(mac)
                 messageInput.setText("")
-            } else if (destinationAddress.isNotEmpty() && input.isNotEmpty()) {
-                sendText(input)
+            } else if (input.startsWith("dest:")) {
+                destinationAddress = input.substring(5).trim()
+                Toast.makeText(this, "Dest set", Toast.LENGTH_SHORT).show()
                 messageInput.setText("")
-            } else {
-                Toast.makeText(this, "Need Dest or Message", Toast.LENGTH_SHORT).show()
+            } else if (destinationAddress.isNotEmpty() && input.isNotEmpty()) {
+                Thread {
+                    try {
+                        val py = Python.getInstance()
+                        py.getModule("rns_backend").callAttr("send_text", destinationAddress, input)
+                    } catch (e: Exception) { Log.e("RNS_HELLO", "Send Error: ${e.message}") }
+                }.start()
+                messageInput.setText("")
             }
-        }
-
-        // 3. Attach Image Logic
-        btnAttach.setOnClickListener {
-            val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
-            startActivityForResult(intent, 101)
         }
     }
 
     private fun initRns() {
         Thread {
             try {
-                // START PYTHON IN THIS THREAD (Fixes Signal Error)
                 if (!Python.isStarted()) {
                     Python.start(AndroidPlatform(this))
                 }
                 val py = Python.getInstance()
-                
-                // Set HOME for Reticulum storage
                 val os = py.getModule("os")
                 os.get("environ")?.callAttr("__setitem__", "HOME", filesDir.absolutePath)
 
                 val rnsBackend = py.getModule("rns_backend")
                 val myAddr = rnsBackend.callAttr("start_rns", filesDir.absolutePath, "", this).toString()
 
-                runOnUiThread {
-                    addressDisplay.text = "My Address: "
-                }
+                runOnUiThread { addressDisplay.text = "My Address: $myAddr" }
             } catch (e: Exception) {
-                Log.e("RNS_HELLO", "Init Error: " + e.message)
-                runOnUiThread { addressDisplay.text = "RNS Error: " + e.message }
+                Log.e("RNS_HELLO", "Init Error: ${e.message}")
             }
         }.start()
     }
@@ -110,62 +90,17 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 val rnsBackend = py.getModule("rns_backend")
                 val success = rnsBackend.callAttr("connect_rnode_bluetooth", mac).toBoolean()
                 runOnUiThread {
-                    Toast.makeText(this, if(success) "Connecting to RNode..." else "BT Failed", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, if(success) "BT Command Sent" else "BT Error", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
-                Log.e("RNS_HELLO", "BT Error: " + e.message)
+                Log.e("RNS_HELLO", "BT Call Error: ${e.message}")
             }
         }.start()
-    }
-
-    private fun sendText(text: String) {
-        Thread {
-            try {
-                val py = Python.getInstance()
-                py.getModule("rns_backend").callAttr("send_text", destinationAddress, text)
-            } catch (e: Exception) {
-                Log.e("RNS_HELLO", "Send Error: " + e.message)
-            }
-        }.start()
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 101 && resultCode == RESULT_OK && data != null) {
-            val uri = data.data ?: return
-            if (destinationAddress.isEmpty()) {
-                Toast.makeText(this, "Set destination first!", Toast.LENGTH_SHORT).show()
-                return
-            }
-            Thread {
-                try {
-                    // IMAGE TRANSFER FIX: Compress to WebP and pass file path
-                    val stream = contentResolver.openInputStream(uri)
-                    val bitmap = BitmapFactory.decodeStream(stream)
-                    val tempFile = File(cacheDir, "outbound.webp")
-                    val out = FileOutputStream(tempFile)
-                    bitmap.compress(Bitmap.CompressFormat.WEBP, 40, out)
-                    out.close()
-
-                    val py = Python.getInstance()
-                    py.getModule("rns_backend").callAttr("send_image", destinationAddress, tempFile.absolutePath)
-                    runOnUiThread { Toast.makeText(this, "Image Sent", Toast.LENGTH_SHORT).show() }
-                } catch (e: Exception) {
-                    Log.e("RNS_HELLO", "Img Send Error: " + e.message)
-                }
-            }.start()
-        }
     }
 
     override fun onTextReceived(senderHash: String, text: String) {
-        runOnUiThread {
-            Toast.makeText(this, "From " + senderHash + ": " + text, Toast.LENGTH_LONG).show()
-        }
+        runOnUiThread { Toast.makeText(this, "From $senderHash: $text", Toast.LENGTH_LONG).show() }
     }
 
-    override fun onImageReceived(senderHash: String, imagePath: String) {
-        runOnUiThread {
-            Toast.makeText(this, "Image received from " + senderHash + ". Saved to cache.", Toast.LENGTH_LONG).show()
-        }
-    }
+    override fun onImageReceived(senderHash: String, imagePath: String) {}
 }
