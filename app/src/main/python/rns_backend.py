@@ -55,7 +55,7 @@ try:
 def connect_rnode_bluetooth(mac_address):
     """
     Tells Reticulum to open an RFCOMM socket to the paired RNode.
-    mac_address format: 'AA:BB:CC:DD:EE:FF'
+    mac_address format: 'F0:24:F9:8D:AF:66'
     """
     try:
         # Sideband style dynamic interface injection
