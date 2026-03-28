@@ -25,9 +25,8 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
     private lateinit var addressDisplay: TextView
     private lateinit var messageInput: EditText
-    private lateinit var nodeList: ListView
-    private val discoveredNodes = mutableListOf<String>()
     private lateinit var listAdapter: ArrayAdapter<String>
+    private val discoveredNodes = mutableListOf<String>()
     
     private var destinationAddress: String = ""
     private var btSocket: BluetoothSocket? = null
@@ -38,18 +37,15 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
         addressDisplay = findViewById(R.id.addressDisplay)
         messageInput = findViewById(R.id.messageInput)
-        nodeList = findViewById(R.id.chatRecyclerView) as? ListView ?: ListView(this) // Fallback if XML is still RecyclerView
-        
         val btnSend = findViewById<Button>(R.id.btnSend)
         val btnAttach = findViewById<Button>(R.id.btnAttach)
+        val listView = findViewById<ListView>(R.id.chatRecyclerView)
 
-        // Setup the Node List UI
         listAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, discoveredNodes)
-        findViewById<ListView>(R.id.chatRecyclerView).adapter = listAdapter
-        
-        findViewById<ListView>(R.id.chatRecyclerView).setOnItemClickListener { _, _, position, _ ->
-            destinationAddress = discoveredNodes[position]
-            Toast.makeText(this, "Chatting with: $destinationAddress", Toast.LENGTH_SHORT).show()
+        listView.adapter = listAdapter
+        listView.setOnItemClickListener { _, _, i, _ ->
+            destinationAddress = discoveredNodes[i]
+            Toast.makeText(this, "Target: $destinationAddress", Toast.LENGTH_SHORT).show()
         }
 
         checkPermissions()
@@ -60,21 +56,81 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 saveMacAndExit(input.substring(8).trim().uppercase())
             } else if (input == "announce") {
                 Thread { Python.getInstance().getModule("rns_backend").callAttr("announce_now") }.start()
-                Toast.makeText(this, "Announce Sent", Toast.LENGTH_SHORT).show()
             } else if (destinationAddress.isNotEmpty() && input.isNotEmpty()) {
                 Thread { Python.getInstance().getModule("rns_backend").callAttr("send_text", destinationAddress, input) }.start()
                 messageInput.setText("")
-            } else {
-                Toast.makeText(this, "Select a node from list or set dest:HEX", Toast.LENGTH_SHORT).show()
             }
         }
 
         btnAttach.setOnClickListener {
-            val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
-            startActivityForResult(intent, 101)
+            if (destinationAddress.isEmpty()) {
+                Toast.makeText(this, "Select a node first!", Toast.LENGTH_SHORT).show()
+            } else {
+                val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+                startActivityForResult(intent, 101)
+            }
         }
     }
 
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 101 && resultCode == RESULT_OK && data != null) {
+            val uri = data.data ?: return
+            Thread {
+                try {
+                    // --- THE COLUMBA IMAGE CRUNCHER ---
+                    // 1. Decode with scaling to reduce memory footprint
+                    val options = BitmapFactory.Options().apply { inSampleSize = 4 }
+                    val stream = contentResolver.openInputStream(uri)
+                    val rawBitmap = BitmapFactory.decodeStream(stream, null, options)
+                    
+                    // 2. Target mesh size: WebP at 20% quality
+                    val tempFile = File(cacheDir, "outbound.webp")
+                    val out = FileOutputStream(tempFile)
+                    rawBitmap?.compress(Bitmap.CompressFormat.WEBP, 20, out)
+                    out.close()
+                    
+                    Log.d("RNS_HELLO", "Compressed image size: ${tempFile.length() / 1024} KB")
+
+                    // 3. Hand path to Python
+                    val py = Python.getInstance()
+                    py.getModule("rns_backend").callAttr("send_image", destinationAddress, tempFile.absolutePath)
+                    
+                    runOnUiThread { Toast.makeText(this, "WebP Sent (${tempFile.length()/1024}KB)", Toast.LENGTH_SHORT).show() }
+                } catch (e: Exception) {
+                    Log.e("RNS_HELLO", "Image compression failed: ${e.message}")
+                }
+            }.start()
+        }
+    }
+
+    // --- STANDARD RNS CALLBACKS ---
+    override fun onAnnounceReceived(hexAddress: String) {
+        runOnUiThread {
+            if (!discoveredNodes.contains(hexAddress)) {
+                discoveredNodes.add(hexAddress)
+                listAdapter.notifyDataSetChanged()
+            }
+        }
+    }
+
+    override fun onTextReceived(senderHash: String, text: String) {
+        runOnUiThread { Toast.makeText(this, "$senderHash: $text", Toast.LENGTH_LONG).show() }
+    }
+
+    override fun onImageReceived(senderHash: String, imagePath: String) {
+        runOnUiThread {
+            // Display the received WebP in a popup
+            val dialog = android.app.Dialog(this)
+            val imgView = ImageView(this)
+            imgView.setImageBitmap(BitmapFactory.decodeFile(imagePath))
+            dialog.setContentView(imgView)
+            dialog.show()
+            Toast.makeText(this, "Image from $senderHash", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // (Permissions and Bridge code omitted for brevity but preserved in local file)
     private fun checkPermissions() {
         val permissions = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_ADMIN)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -83,9 +139,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         }
         if (permissions.any { ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }) {
             ActivityCompat.requestPermissions(this, permissions.toTypedArray(), 1)
-        } else {
-            startStack()
-        }
+        } else { startStack() }
     }
 
     private fun startStack() {
@@ -109,9 +163,9 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             val m = device.javaClass.getMethod("createInsecureRfcommSocket", Int::class.javaPrimitiveType)
             btSocket = m.invoke(device, 1) as BluetoothSocket
             btSocket?.connect()
-            val server = ServerSocket(7633)
+            tcpServer = ServerSocket(7633)
             Thread {
-                val client = server.accept()
+                val client = tcpServer?.accept()
                 val btIn = btSocket?.inputStream
                 val btOut = btSocket?.outputStream
                 val tcpIn = client?.inputStream
@@ -123,44 +177,13 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         } catch (e: Exception) { false }
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) startStack()
+    }
+
     private fun saveMacAndExit(mac: String) {
         getSharedPreferences("rns_prefs", MODE_PRIVATE).edit().putString("last_mac", mac).commit()
         android.os.Process.killProcess(android.os.Process.myPid())
-    }
-
-    override fun onAnnounceReceived(hexAddress: String) {
-        runOnUiThread {
-            if (!discoveredNodes.contains(hexAddress)) {
-                discoveredNodes.add(hexAddress)
-                listAdapter.notifyDataSetChanged()
-                Toast.makeText(this, "New node discovered!", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    override fun onTextReceived(senderHash: String, text: String) {
-        runOnUiThread { Toast.makeText(this, "MSG from $senderHash: $text", Toast.LENGTH_LONG).show() }
-    }
-
-    override fun onImageReceived(senderHash: String, imagePath: String) {
-        runOnUiThread { Toast.makeText(this, "IMG from $senderHash: Saved to $imagePath", Toast.LENGTH_LONG).show() }
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 101 && resultCode == RESULT_OK && data != null && destinationAddress.isNotEmpty()) {
-            Thread {
-                try {
-                    val stream = contentResolver.openInputStream(data.data!!)
-                    val bitmap = BitmapFactory.decodeStream(stream)
-                    val tempFile = File(cacheDir, "send.webp")
-                    val out = FileOutputStream(tempFile)
-                    bitmap.compress(Bitmap.CompressFormat.WEBP, 30, out) // Compressed for LoRa
-                    out.close()
-                    Python.getInstance().getModule("rns_backend").callAttr("send_image", destinationAddress, tempFile.absolutePath)
-                    runOnUiThread { Toast.makeText(this@MainActivity, "Image Sent", Toast.LENGTH_SHORT).show() }
-                } catch (e: Exception) { Log.e("RNS_HELLO", "Img Err: ${e.message}") }
-            }.start()
-        }
     }
 }
