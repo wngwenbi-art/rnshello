@@ -34,9 +34,9 @@ def start_rns(storage_path, use_bridge, callback_obj):
     interface_enabled = True
     outgoing = True
     port = socket://127.0.0.1:4321
+    flow_control = False
 """
 
-    # FIXED THE SPACING HERE! Added double newlines so [interfaces] is on its own block.
     full_config = f"""[reticulum]
 enable_transport = True
 share_instance = Yes
@@ -76,8 +76,7 @@ def on_lxmf_delivery(lxm):
         content = lxm.content.decode("utf-8")
         if kotlin_ui_callback:
             kotlin_ui_callback.onTextReceived(sender, content)
-    except Exception as e:
-        log(f"Delivery Error: {e}")
+    except Exception as e: pass
 
 def send_text(dest_hex, text):
     try:
@@ -87,6 +86,4 @@ def send_text(dest_hex, text):
         lxm = LXMF.LXMessage(dest, local_destination, text, title="rnshello")
         router.handle_outbound(lxm)
         return True
-    except Exception as e:
-        log(f"Send Error: {e}")
-        return False
+    except Exception as e: return False

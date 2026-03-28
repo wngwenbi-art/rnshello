@@ -21,8 +21,6 @@ import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import java.io.File
 import java.io.FileOutputStream
-import java.io.InputStream
-import java.io.OutputStream
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.UUID
@@ -92,21 +90,25 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             try {
                 var useBridge = "false"
                 if (savedMac.isNotEmpty()) {
-                    runOnUiThread { addressDisplay.text = "Connecting to RNode BT..." }
+                    runOnUiThread { addressDisplay.text = "1. Connecting BT to $savedMac..." }
+                    
                     if (startBtTcpBridge(savedMac)) {
+                        runOnUiThread { addressDisplay.text = "2. BT Connected! Starting Python..." }
                         useBridge = "true"
+                    } else {
+                        runOnUiThread { addressDisplay.text = "BT FAILED! Check pairing or power." }
+                        return@Thread // Stop here so user sees the error
                     }
                 }
 
-                // 2. Start Python after bridge is established
                 if (!Python.isStarted()) {
-                    Python.start(AndroidPlatform(this))
+                    Python.start(AndroidPlatform(this@MainActivity))
                 }
                 val py = Python.getInstance()
                 py.getModule("os").get("environ")?.callAttr("__setitem__", "HOME", filesDir.absolutePath)
 
                 val rnsBackend = py.getModule("rns_backend")
-                val myAddr = rnsBackend.callAttr("start_rns", filesDir.absolutePath, useBridge, this).toString()
+                val myAddr = rnsBackend.callAttr("start_rns", filesDir.absolutePath, useBridge, this@MainActivity).toString()
 
                 runOnUiThread { addressDisplay.text = "My Address: $myAddr\nBT: $savedMac" }
 
@@ -118,22 +120,31 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
     private fun startBtTcpBridge(mac: String): Boolean {
         try {
-            // 1. Connect Bluetooth (SPP UUID)
-            val adapter = BluetoothAdapter.getDefaultAdapter() ?: return false
+            val adapter = BluetoothAdapter.getDefaultAdapter() ?: throw Exception("No BT Adapter")
             val device = adapter.getRemoteDevice(mac)
-            val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+            val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB") // Standard Serial UUID
             
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return false
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                throw Exception("Missing Permission")
+            }
             
-            btSocket = device.createRfcommSocketToServiceRecord(uuid)
-            btSocket?.connect()
+            // Try Secure first
+            try {
+                btSocket = device.createRfcommSocketToServiceRecord(uuid)
+                btSocket?.connect()
+            } catch (e: Exception) {
+                Log.w("RNS_HELLO", "Secure BT failed, trying Insecure...", e)
+                // THE FALLBACK: Required for RNodes on modern Android
+                btSocket = device.createInsecureRfcommSocketToServiceRecord(uuid)
+                btSocket?.connect()
+            }
 
-            // 2. Open Local TCP Server
+            // Bind Local TCP
+            if (tcpServer != null && !tcpServer!!.isClosed) tcpServer!!.close()
             tcpServer = ServerSocket(4321)
+            tcpServer?.reuseAddress = true
 
-            // 3. Start bridging in background
             Thread { bridgeData() }.start()
-
             return true
         } catch (e: Exception) {
             Log.e("RNS_HELLO", "BT Bridge Failed: ${e.message}")
@@ -143,13 +154,16 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
     private fun bridgeData() {
         try {
-            tcpClient = tcpServer?.accept() // Waits for Python to connect
+            Log.d("RNS_HELLO", "Waiting for Python TCP Connection...")
+            tcpClient = tcpServer?.accept() // Unblocks when Python connects
+            Log.d("RNS_HELLO", "Python Connected to Bridge!")
+            
             val btIn = btSocket?.inputStream
             val btOut = btSocket?.outputStream
             val tcpIn = tcpClient?.inputStream
             val tcpOut = tcpClient?.outputStream
 
-            // TCP to BT
+            // TCP -> BT
             Thread {
                 try {
                     val buffer = ByteArray(1024)
@@ -160,7 +174,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 } catch (e: Exception) {}
             }.start()
 
-            // BT to TCP
+            // BT -> TCP
             Thread {
                 try {
                     val buffer = ByteArray(1024)
@@ -184,7 +198,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        // Image logic unchanged
     }
 
     override fun onTextReceived(senderHash: String, text: String) {
