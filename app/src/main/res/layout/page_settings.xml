@@ -1,21 +1,56 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent" android:layout_height="match_parent" android:background="#FFFFFF">
-    <LinearLayout android:orientation="vertical" android:layout_width="match_parent" android:layout_height="wrap_content" android:padding="16dp">
-        <TextView android:text="My RNS Address" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" />
-        <TextView android:id="@+id/addressDisplay" android:text="Generating..." android:background="#F0F0F0" android:padding="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:fontFamily="monospace" android:layout_marginBottom="10dp" />
-        <EditText android:id="@+id/setNick" android:hint="Nickname" android:layout_width="match_parent" android:layout_height="wrap_content" />
-        <TextView android:text="RNode Bluetooth" android:textStyle="bold" android:layout_marginTop="15dp" android:layout_width="wrap_content" android:layout_height="wrap_content" />
-        <LinearLayout android:orientation="horizontal" android:layout_width="match_parent" android:layout_height="wrap_content">
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent" android:layout_height="match_parent" 
+    android:background="@color/md_theme_surface"
+    android:paddingBottom="120dp" android:clipToPadding="false">
+    
+    <LinearLayout android:orientation="vertical" android:layout_width="match_parent" android:layout_height="wrap_content" android:padding="20dp">
+        
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent" android:layout_height="wrap_content" app:cardCornerRadius="12dp" app:strokeWidth="1dp" app:strokeColor="@color/md_theme_surfaceVariant" android:layout_marginBottom="16dp">
+            <LinearLayout android:orientation="vertical" android:padding="16dp" android:layout_width="match_parent" android:layout_height="wrap_content">
+                <TextView android:text="My RNS Address" android:textStyle="bold" android:textColor="@color/md_theme_primary" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <TextView android:id="@+id/setHash" android:text="Generating..." android:textSize="12sp" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:fontFamily="monospace" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Nickname" style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox" android:layout_marginBottom="16dp">
+            <com.google.android.material.textfield.TextInputEditText android:id="@+id/setNick" android:layout_width="match_parent" android:layout_height="wrap_content" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <TextView android:text="Bluetooth Connection" android:textStyle="bold" android:layout_marginBottom="8dp" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+        <LinearLayout android:orientation="horizontal" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:layout_marginBottom="8dp">
             <Spinner android:id="@+id/setBtSpinner" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" />
-            <Button android:id="@+id/btnRefreshBt" android:text="Refresh" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            <Button android:id="@+id/btnRefreshBt" style="@style/Widget.MaterialComponents.Button.TextButton" android:text="Refresh" android:layout_width="wrap_content" android:layout_height="wrap_content" />
         </LinearLayout>
-        <Button android:id="@+id/btnSetConnect" android:text="Connect" android:layout_width="match_parent" android:layout_height="wrap_content" />
-        <TextView android:text="Regional Frequency" android:textStyle="bold" android:layout_marginTop="15dp" android:layout_width="wrap_content" android:layout_height="wrap_content" />
-        <Spinner android:id="@+id/spinRegion" android:layout_width="match_parent" android:layout_height="wrap_content" />
-        <Spinner android:id="@+id/spinBw" android:layout_width="match_parent" android:layout_height="wrap_content" />
-        <Spinner android:id="@+id/spinSf" android:layout_width="match_parent" android:layout_height="wrap_content" />
-        <Spinner android:id="@+id/spinCr" android:layout_width="match_parent" android:layout_height="wrap_content" />
-        <Button android:id="@+id/btnSaveSettings" android:text="Save Parameters" android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <!-- RADIO PARAMETERS WITH SLIDERS -->
+        <TextView android:text="Radio Tuning Parameters" android:textStyle="bold" android:layout_marginTop="16dp" android:layout_marginBottom="8dp" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+        
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent" android:layout_height="wrap_content" app:cardCornerRadius="12dp" app:strokeWidth="1dp" app:strokeColor="@color/md_theme_surfaceVariant">
+            <LinearLayout android:orientation="vertical" android:padding="16dp" android:layout_width="match_parent" android:layout_height="wrap_content">
+                
+                <TextView android:id="@+id/lblFreq" android:text="Frequency: " android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <SeekBar android:id="@+id/seekFreq" android:layout_width="match_parent" android:layout_height="wrap_content" style="@style/Widget.AppCompat.SeekBar.Discrete" android:layout_marginBottom="12dp"/>
+
+                <TextView android:id="@+id/lblBw" android:text="Bandwidth: " android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <SeekBar android:id="@+id/seekBw" android:layout_width="match_parent" android:layout_height="wrap_content" style="@style/Widget.AppCompat.SeekBar.Discrete" android:layout_marginBottom="12dp"/>
+
+                <TextView android:id="@+id/lblTx" android:text="TX Power: " android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <SeekBar android:id="@+id/seekTx" android:layout_width="match_parent" android:layout_height="wrap_content" style="@style/Widget.AppCompat.SeekBar.Discrete" android:layout_marginBottom="12dp"/>
+
+                <TextView android:id="@+id/lblSf" android:text="Spreading Factor (SF): " android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <SeekBar android:id="@+id/seekSf" android:layout_width="match_parent" android:layout_height="wrap_content" style="@style/Widget.AppCompat.SeekBar.Discrete" android:layout_marginBottom="12dp"/>
+
+                <TextView android:id="@+id/lblCr" android:text="Coding Rate (CR): " android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <SeekBar android:id="@+id/seekCr" android:layout_width="match_parent" android:layout_height="wrap_content" style="@style/Widget.AppCompat.SeekBar.Discrete" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+        
+        <Button android:id="@+id/btnSetConnect" android:text="Save &amp; Connect" android:layout_marginTop="20dp" android:layout_width="match_parent" android:layout_height="60dp" app:cornerRadius="12dp" />
     </LinearLayout>
 </ScrollView>
