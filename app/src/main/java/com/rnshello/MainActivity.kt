@@ -53,7 +53,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         nodesAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, discoveredNodes)
         
         loadSavedNodes()
-        loadChatHistory() // Load saved messages from JSON database
+        loadChatHistory() 
 
         val nav = findViewById<BottomNavigationView>(R.id.bottom_nav)
         nav.setOnItemSelectedListener { item ->
@@ -97,7 +97,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 ownHash = py.getModule("rns_backend").callAttr("start_rns", filesDir.absolutePath, this, nick).toString()
                 
                 if (savedMac.isNotEmpty()) {
-                    Thread.sleep(1500) // Wait for background bridge to connect
+                    Thread.sleep(1500) 
                     val f = when(prefs.getInt("sel_region", 0)) { 0 -> "433025000"; 1 -> "915000000"; else -> "433000000" }
                     val bw = when(prefs.getInt("sel_bw", 0)) { 0 -> "125000"; 1 -> "62500"; else -> "31250" }
                     val sf = (prefs.getInt("sel_sf", 1) + 7).toString()
@@ -156,7 +156,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             val mac = btSpinner.selectedItem.toString().substringAfterLast("\n")
             prefs.edit().putString("last_mac", mac).apply()
             Toast.makeText(this, "Connecting to RNode in Background...", Toast.LENGTH_SHORT).show()
-            startRns() // Restart stack with new MAC in background
+            startRns() 
         }
         view.findViewById<Button>(R.id.btnSaveSettings).setOnClickListener {
             prefs.edit().putString("my_nickname", view.findViewById<EditText>(R.id.setNick).text.toString()).apply()
@@ -190,8 +190,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         }
         replaceFrame(view)
     }
-
-    // --- JSON DATABASE PERSISTENCE ---
 
     private fun saveChatHistory() {
         val jsonArray = JSONArray()
@@ -229,8 +227,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         } catch (e: Exception) { Log.e("RNS", "Load Chat Error", e) }
     }
 
-    // --- RNS CALLBACKS ---
-
     override fun onAnnounceReceived(hex: String, nickname: String) {
         if (nickname.isNotEmpty()) prefs.edit().putString("nick_$hex", nickname).apply()
         val list = prefs.getStringSet("node_list", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
@@ -245,18 +241,16 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             chatAdapter.addMessage(Message(senderHash = s, content = c, timestamp = t, isImage = img, isSent = sent), id)
             chatRecyclerView?.scrollToPosition(chatAdapter.itemCount - 1)
             if (!sent) showNotification(s, if(img) "Image received" else c)
-            saveChatHistory() // Save to DB instantly
+            saveChatHistory() 
         }
     }
 
     override fun onMessageDelivered(id: String) { 
         runOnUiThread { 
             chatAdapter.markDelivered(id)
-            saveChatHistory() // Update delivery tick in DB
+            saveChatHistory() 
         } 
     }
-
-    // --- SYSTEM LOGIC ---
 
     private fun showNotification(sender: String, text: String) {
         val nick = prefs.getString("nick_$sender", sender.take(6))
@@ -265,7 +259,9 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             .setContentTitle("Msg: $nick")
             .setContentText(text)
             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
-        androidx.core.app.NotificationManagerCompat.from(this).notify(Random().nextInt(), builder.build())
+        
+        // THE FIX: Use System.currentTimeMillis().toInt() instead of Random()
+        androidx.core.app.NotificationManagerCompat.from(this).notify(System.currentTimeMillis().toInt(), builder.build())
     }
 
     private fun loadSavedNodes() {
