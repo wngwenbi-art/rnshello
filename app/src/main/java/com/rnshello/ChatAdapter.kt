@@ -1,4 +1,4 @@
-package com.rnshello
+﻿package com.rnshello
 
 import android.graphics.BitmapFactory
 import android.view.*
@@ -7,10 +7,18 @@ import androidx.recyclerview.widget.RecyclerView
 import android.content.Context
 
 class ChatAdapter(private val context: Context, private val onImageClick: (String) -> Unit) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
-    private val messages = mutableListOf<Message>()
+    private var messages = mutableListOf<Message>()
     private val messageMap = mutableMapOf<String, Int>()
 
-    fun getMessages(): List<Message> = messages
+    fun setMessages(newMessages: List<Message>) {
+        messages.clear()
+        messageMap.clear()
+        newMessages.forEachIndexed { index, msg ->
+            messages.add(msg)
+            messageMap[msg.id] = index
+        }
+        notifyDataSetChanged()
+    }
 
     fun addMessage(message: Message, lxmfId: String? = null) {
         messages.add(message)

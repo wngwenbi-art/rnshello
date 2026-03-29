@@ -1,4 +1,4 @@
-package com.rnshello
+﻿package com.rnshello
 
 import android.Manifest
 import android.app.AlertDialog
@@ -39,6 +39,10 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     private var ownHash = ""
     private var targetHash = ""
     private lateinit var chatAdapter: ChatAdapter
+    
+    // NEW: Master list of all messages across all conversations
+    private val allMessages = mutableListOf<Message>()
+    
     private val discoveredNodes = mutableListOf<String>()
     private lateinit var nodesAdapter: ArrayAdapter<String>
     private var chatRecyclerView: RecyclerView? = null
@@ -86,7 +90,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
     private fun startRns() {
         val savedMac = prefs.getString("last_mac", "") ?: ""
-        // Start Service to handle BT connection completely independently
         val intent = Intent(this, RnsService::class.java).apply { putExtra("mac", savedMac) }
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
         
@@ -98,9 +101,8 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 val nick = prefs.getString("my_nickname", "User")
                 ownHash = py.getModule("rns_backend").callAttr("start_rns", filesDir.absolutePath, this, nick).toString()
                 
-                // If we have a saved MAC, inject parameters
                 if (savedMac.isNotEmpty()) {
-                    Thread.sleep(2500) // Wait for Background Service to bind TCP
+                    Thread.sleep(1500) 
                     val f = when(prefs.getInt("sel_region", 0)) { 0 -> "433025000"; 1 -> "915000000"; else -> "433000000" }
                     val bw = when(prefs.getInt("sel_bw", 0)) { 0 -> "125000"; 1 -> "62500"; else -> "31250" }
                     val sf = (prefs.getInt("sel_sf", 1) + 7).toString()
@@ -109,29 +111,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 }
                 runOnUiThread { if (currentViewType == 1) showSettings() }
             } catch (e: Exception) {}
-        }.start()
-    }
-
-    private fun connectAndTune(mac: String) {
-        Thread {
-            try {
-                runOnUiThread { Toast.makeText(this@MainActivity, "Starting BT Bridge...", Toast.LENGTH_SHORT).show() }
-                
-                val intent = Intent(this@MainActivity, RnsService::class.java).apply { putExtra("mac", mac) }
-                if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
-                
-                Thread.sleep(3000) 
-                
-                val f = when(prefs.getInt("sel_region", 0)) { 0 -> "433025000"; 1 -> "915000000"; else -> "433000000" }
-                val bw = when(prefs.getInt("sel_bw", 0)) { 0 -> "125000"; 1 -> "62500"; else -> "31250" }
-                val sf = (prefs.getInt("sel_sf", 1) + 7).toString()
-                val cr = (prefs.getInt("sel_cr", 1) + 5).toString()
-
-                val pyStatus = Python.getInstance().getModule("rns_backend").callAttr("inject_rnode", f, bw, "17", sf, cr).toString()
-                runOnUiThread { Toast.makeText(this@MainActivity, "RNode: $pyStatus", Toast.LENGTH_SHORT).show() }
-            } catch (e: Exception) {
-                Log.e("RNS", "Tune Error", e)
-            }
         }.start()
     }
 
@@ -151,7 +130,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         }
         view.findViewById<Button>(R.id.btnManualAnnounce).setOnClickListener {
             Thread { Python.getInstance().getModule("rns_backend").callAttr("announce_now") }.start()
-            Toast.makeText(this, "Broadcasting...", Toast.LENGTH_SHORT).show()
         }
         replaceFrame(view)
     }
@@ -169,17 +147,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         
         val spinRegion = view.findViewById<Spinner>(R.id.spinRegion)
         spinRegion.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, arrayOf("Europe (433MHz)", "USA (915MHz)", "Asia (433MHz)"))
-        val spinBw = view.findViewById<Spinner>(R.id.spinBw)
-        spinBw.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, arrayOf("125 kHz", "62.5 kHz", "31.25 kHz"))
-        val spinSf = view.findViewById<Spinner>(R.id.spinSf)
-        spinSf.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, (7..12).map { "SF $it" })
-        val spinCr = view.findViewById<Spinner>(R.id.spinCr)
-        spinCr.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, (5..8).map { "CR $it" })
-        
-        spinRegion.setSelection(prefs.getInt("sel_region", 0))
-        spinBw.setSelection(prefs.getInt("sel_bw", 0))
-        spinSf.setSelection(prefs.getInt("sel_sf", 1))
-        spinCr.setSelection(prefs.getInt("sel_cr", 1))
         
         val btSpinner = view.findViewById<Spinner>(R.id.setBtSpinner)
         val updateBT = {
@@ -192,26 +159,12 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         view.findViewById<Button>(R.id.btnRefreshBt).setOnClickListener { showSettings() }
         view.findViewById<Button>(R.id.btnSetConnect).setOnClickListener {
             val mac = btSpinner.selectedItem.toString().substringAfterLast("\n")
-            prefs.edit().apply {
-                putString("last_mac", mac)
-                putString("my_nickname", view.findViewById<EditText>(R.id.setNick).text.toString())
-                putInt("sel_region", spinRegion.selectedItemPosition)
-                putInt("sel_bw", spinBw.selectedItemPosition)
-                putInt("sel_sf", spinSf.selectedItemPosition)
-                putInt("sel_cr", spinCr.selectedItemPosition)
-                apply()
-            }
-            connectAndTune(mac)
+            prefs.edit().putString("last_mac", mac).apply()
+            Toast.makeText(this, "Connecting to RNode in Background...", Toast.LENGTH_SHORT).show()
+            startRns()
         }
         view.findViewById<Button>(R.id.btnSaveSettings).setOnClickListener {
-            prefs.edit().apply {
-                putString("my_nickname", view.findViewById<EditText>(R.id.setNick).text.toString())
-                putInt("sel_region", spinRegion.selectedItemPosition)
-                putInt("sel_bw", spinBw.selectedItemPosition)
-                putInt("sel_sf", spinSf.selectedItemPosition)
-                putInt("sel_cr", spinCr.selectedItemPosition)
-                apply()
-            }
+            prefs.edit().putString("my_nickname", view.findViewById<EditText>(R.id.setNick).text.toString()).apply()
             Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
         }
         replaceFrame(view)
@@ -223,9 +176,13 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         val nick = prefs.getString("nick_$targetHash", "")
         supportActionBar?.title = if (!nick.isNullOrEmpty()) nick else targetHash.take(6)
         val view = layoutInflater.inflate(R.layout.page_chat, null)
+        
         chatRecyclerView = view.findViewById(R.id.chatRv)
         chatRecyclerView?.layoutManager = LinearLayoutManager(this)
         chatRecyclerView?.adapter = chatAdapter
+        
+        // THE FIX: Only show messages for the currently selected Node!
+        chatAdapter.setMessages(allMessages.filter { it.targetHash == targetHash })
         chatRecyclerView?.scrollToPosition(chatAdapter.itemCount - 1)
         
         view.findViewById<ImageButton>(R.id.btnChatSend).setOnClickListener {
@@ -245,9 +202,10 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
     private fun saveChatHistory() {
         val jsonArray = JSONArray()
-        for (m in chatAdapter.getMessages()) {
+        for (m in allMessages) {
             val obj = JSONObject()
             obj.put("id", m.id)
+            obj.put("target", m.targetHash)
             obj.put("sender", m.senderHash)
             obj.put("content", m.content)
             obj.put("timestamp", m.timestamp)
@@ -263,18 +221,28 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         try {
             val jsonString = prefs.getString("chat_history", "[]")
             val jsonArray = JSONArray(jsonString)
+            allMessages.clear()
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
+                val isSent = obj.getBoolean("isSent")
+                val sender = obj.getString("sender")
+                
+                // Fallback for old messages that didn't have targetHash
+                val target = if (obj.has("target")) obj.getString("target") else {
+                    if (isSent) "Unknown" else sender
+                }
+
                 val m = Message(
                     obj.getString("id"),
-                    obj.getString("sender"),
+                    target,
+                    sender,
                     obj.getString("content"),
                     obj.getLong("timestamp"),
                     obj.getBoolean("isImage"),
-                    obj.getBoolean("isSent"),
+                    isSent,
                     obj.getBoolean("isDelivered")
                 )
-                chatAdapter.addMessage(m, if(!m.isDelivered) m.id else null)
+                allMessages.add(m)
             }
         } catch (e: Exception) { Log.e("RNS", "Load Chat Error", e) }
     }
@@ -290,15 +258,28 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
     override fun onNewMessage(s: String, c: String, t: Long, img: Boolean, sent: Boolean, id: String) {
         runOnUiThread { 
-            chatAdapter.addMessage(Message(senderHash = s, content = c, timestamp = t, isImage = img, isSent = sent), id)
-            chatRecyclerView?.scrollToPosition(chatAdapter.itemCount - 1)
-            if (!sent) showNotification(s, if(img) "Image received" else c)
+            // Determine the conversation owner
+            val convHash = if (sent) targetHash else s
+            val m = Message(id = id, targetHash = convHash, senderHash = s, content = c, timestamp = t, isImage = img, isSent = sent, isDelivered = false)
+            
+            allMessages.add(m)
             saveChatHistory() 
+            
+            // Only update the active screen if we are looking at this conversation
+            if (currentViewType == 3 && targetHash == convHash) {
+                chatAdapter.addMessage(m, id)
+                chatRecyclerView?.scrollToPosition(chatAdapter.itemCount - 1)
+            }
+            
+            if (!sent) showNotification(s, if(img) "Image received" else c)
         }
     }
 
     override fun onMessageDelivered(id: String) { 
         runOnUiThread { 
+            val msg = allMessages.find { it.id == id }
+            if (msg != null) msg.isDelivered = true
+            
             chatAdapter.markDelivered(id)
             saveChatHistory() 
         } 
@@ -311,6 +292,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             .setContentTitle("Msg: $nick")
             .setContentText(text)
             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+        
         androidx.core.app.NotificationManagerCompat.from(this).notify(System.currentTimeMillis().toInt(), builder.build())
     }
 
@@ -351,6 +333,10 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     private fun checkPermissions(): Boolean {
         val p = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_ADMIN, Manifest.permission.CAMERA)
         if (Build.VERSION.SDK_INT >= 31) { p.add(Manifest.permission.BLUETOOTH_CONNECT); p.add(Manifest.permission.BLUETOOTH_SCAN) }
+        
+        // THE FIX: Request POST_NOTIFICATIONS on Android 13+ so background alerts actually appear
+        if (Build.VERSION.SDK_INT >= 33) { p.add(Manifest.permission.POST_NOTIFICATIONS) }
+        
         if (p.any { ActivityCompat.checkSelfPermission(this, it) != 0 }) { ActivityCompat.requestPermissions(this, p.toTypedArray(), 1); return false }
         return true
     }
