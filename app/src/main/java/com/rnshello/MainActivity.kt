@@ -8,7 +8,6 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -25,9 +24,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import com.google.android.material.bottomnavigation.BottomNavigationView
-import com.google.zxing.BarcodeFormat
 import com.google.zxing.integration.android.IntentIntegrator
-import com.google.zxing.qrcode.QRCodeWriter
 import java.io.File
 import java.io.FileOutputStream
 import java.util.*
@@ -47,10 +44,12 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         setContentView(R.layout.activity_main)
         val toolbar = findViewById<Toolbar>(R.id.toolbar)
         setSupportActionBar(toolbar)
+        
         prefs = getSharedPreferences("rns_database", MODE_PRIVATE)
         chatAdapter = ChatAdapter(this) { path -> showBigImage(path) }
         nodesAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, discoveredNodes)
         loadSavedNodes()
+
         val nav = findViewById<BottomNavigationView>(R.id.bottom_nav)
         nav.setOnItemSelectedListener { item ->
             when(item.itemId) {
@@ -88,16 +87,16 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 if (!Python.isStarted()) Python.start(AndroidPlatform(this))
                 val py = Python.getInstance()
                 py.getModule("os").get("environ")?.callAttr("__setitem__", "HOME", filesDir.absolutePath)
-                ownHash = py.getModule("rns_backend").callAttr("start_rns", filesDir.absolutePath, this, prefs.getString("my_nickname", "User")).toString()
-                runOnUiThread { if (currentViewType == 1) showSettings() }
-            } catch (e: Exception) {}
+                val nick = prefs.getString("my_nickname", "User")
+                ownHash = py.getModule("rns_backend").callAttr("start_rns", filesDir.absolutePath, this, nick).toString()
+            } catch (e: Exception) { Log.e("RNS", "Init Error", e) }
         }.start()
     }
 
     private fun showNodes() {
         currentViewType = 2
         invalidateOptionsMenu()
-        supportActionBar?.title = "Nodes"
+        supportActionBar?.title = "Mesh Nodes"
         val view = layoutInflater.inflate(R.layout.page_nodes, null)
         val lv = view.findViewById<ListView>(R.id.nodeListView)
         lv.adapter = nodesAdapter
@@ -110,6 +109,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         }
         view.findViewById<Button>(R.id.btnManualAnnounce).setOnClickListener {
             Thread { Python.getInstance().getModule("rns_backend").callAttr("announce_now") }.start()
+            Toast.makeText(this, "Broadcasting...", Toast.LENGTH_SHORT).show()
         }
         replaceFrame(view)
     }
@@ -119,28 +119,21 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         invalidateOptionsMenu()
         supportActionBar?.title = "Settings"
         val view = layoutInflater.inflate(R.layout.page_settings, null)
-        view.findViewById<TextView>(R.id.addressDisplay).apply {
-            text = if(ownHash.isEmpty()) "Initializing..." else ownHash
-            setOnClickListener { if(ownHash.isNotEmpty()) showQr(ownHash) }
-        }
+        view.findViewById<TextView>(R.id.addressDisplay).text = if(ownHash.isEmpty()) "Connecting..." else ownHash
         view.findViewById<EditText>(R.id.setNick).setText(prefs.getString("my_nickname", "User"))
         
-        val spinRegion = view.findViewById<Spinner>(R.id.spinRegion)
-        spinRegion.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, arrayOf("Europe (433MHz)", "USA (915MHz)", "Asia (433MHz)"))
-        
         val btSpinner = view.findViewById<Spinner>(R.id.setBtSpinner)
-        val updateBT = {
-            val adapter = BluetoothAdapter.getDefaultAdapter()
-            if (adapter != null && ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                btSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, adapter.bondedDevices.map { "${it.name}\n${it.address}" })
-            }
+        val adapter = BluetoothAdapter.getDefaultAdapter()
+        if (adapter != null && ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == 0) {
+            btSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, adapter.bondedDevices.map { "${it.name}\n${it.address}" })
         }
-        updateBT()
-        view.findViewById<Button>(R.id.btnRefreshBt).setOnClickListener { updateBT() }
+        
+        view.findViewById<Button>(R.id.btnRefreshBt).setOnClickListener { showSettings() }
         view.findViewById<Button>(R.id.btnSetConnect).setOnClickListener {
             val mac = btSpinner.selectedItem.toString().substringAfterLast("\n")
-            prefs.edit().putString("last_mac", mac).commit()
+            prefs.edit().putString("last_mac", mac).apply()
             startRns()
+            Toast.makeText(this, "Bridge Initialized", Toast.LENGTH_SHORT).show()
         }
         view.findViewById<Button>(R.id.btnSaveSettings).setOnClickListener {
             prefs.edit().putString("my_nickname", view.findViewById<EditText>(R.id.setNick).text.toString()).apply()
@@ -158,6 +151,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         chatRecyclerView = view.findViewById(R.id.chatRv)
         chatRecyclerView?.layoutManager = LinearLayoutManager(this)
         chatRecyclerView?.adapter = chatAdapter
+        
         view.findViewById<ImageButton>(R.id.btnChatSend).setOnClickListener {
             val input = view.findViewById<EditText>(R.id.chatInput)
             val txt = input.text.toString().trim()
@@ -197,14 +191,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             discoveredNodes.add(if (!nick.isNullOrEmpty()) "$nick ($hex)" else hex)
         }
         nodesAdapter.notifyDataSetChanged()
-    }
-
-    private fun showQr(data: String) {
-        val bitMatrix = QRCodeWriter().encode(data, BarcodeFormat.QR_CODE, 512, 512)
-        val bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.RGB_565)
-        for (x in 0..511) for (y in 0..511) bmp.setPixel(x, y, if (bitMatrix.get(x, y)) Color.BLACK else Color.WHITE)
-        val img = ImageView(this); img.setImageBitmap(bmp)
-        AlertDialog.Builder(this).setTitle("My RNS Hash").setView(img).setPositiveButton("Close", null).show()
     }
 
     private fun showBigImage(path: String) {

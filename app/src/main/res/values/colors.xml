@@ -1,11 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Primary Green Theme -->
     <color name="colorPrimary">#1F8432</color>
     <color name="colorPrimaryDark">#155C22</color>
     <color name="colorAccent">#1F8432</color>
-    <color name="md_theme_primary">#1F8432</color>
     <color name="white">#FFFFFF</color>
     <color name="black">#000000</color>
+
+    <!-- Full Material 3 Palette (Fixes Build Errors) -->
+    <color name="md_theme_primary">#1F8432</color>
+    <color name="md_theme_onPrimary">#FFFFFF</color>
+    <color name="md_theme_primaryContainer">#ABE9B3</color>
+    <color name="md_theme_onPrimaryContainer">#002106</color>
+    <color name="md_theme_secondary">#52634F</color>
+    <color name="md_theme_onSecondary">#FFFFFF</color>
+    <color name="md_theme_secondaryContainer">#D5E8CF</color>
+    <color name="md_theme_onSecondaryContainer">#111F0F</color>
+    <color name="md_theme_tertiary">#38656A</color>
+    <color name="md_theme_onTertiary">#FFFFFF</color>
+    <color name="md_theme_tertiaryContainer">#BCEBF0</color>
+    <color name="md_theme_onTertiaryContainer">#002022</color>
+    <color name="md_theme_error">#BA1A1A</color>
+    <color name="md_theme_onError">#FFFFFF</color>
+    <color name="md_theme_background">#FDFCFF</color>
+    <color name="md_theme_onBackground">#1A1C1E</color>
+    <color name="md_theme_surface">#FDFCFF</color>
+    <color name="md_theme_onSurface">#1A1C1E</color>
+    <color name="md_theme_surfaceVariant">#DFE2EB</color>
+    <color name="md_theme_onSurfaceVariant">#43474E</color>
+    <color name="md_theme_outline">#73777F</color>
+
+    <!-- Chat Bubble Specifics -->
     <color name="bubble_sent">#DCF8C6</color>
     <color name="bubble_received">#FFFFFF</color>
 </resources>
