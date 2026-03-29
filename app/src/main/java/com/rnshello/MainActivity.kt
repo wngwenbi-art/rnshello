@@ -40,10 +40,12 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     private var btSocket: BluetoothSocket? = null
     private var tcpServer: ServerSocket? = null
     
-    // UI components
     private lateinit var chatAdapter: ChatAdapter
     private val discoveredNodes = mutableListOf<String>()
     private lateinit var nodesAdapter: ArrayAdapter<String>
+
+    // GLOBAL REFERENCES TO PREVENT UNRESOLVED REFERENCE ERRORS
+    private var chatRecyclerView: RecyclerView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,23 +66,25 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         }
 
         if (checkPermissions()) startRns()
-        showSettings() // Start at settings
+        showSettings()
     }
-
-    // --- NAVIGATION PAGES ---
 
     private fun showSettings() {
         val view = layoutInflater.inflate(R.layout.page_settings, null)
         val hashTxt = view.findViewById<TextView>(R.id.setHash)
         val nickInput = view.findViewById<EditText>(R.id.setNick)
+        val freqInput = view.findViewById<EditText>(R.id.setFreq)
         
-        hashTxt.text = if(ownHash.isEmpty()) "Loading..." else ownHash
+        hashTxt.text = if(ownHash.isEmpty()) "Generating..." else ownHash
         hashTxt.setOnClickListener { if(ownHash.isNotEmpty()) showQr(ownHash) }
         
         nickInput.setText(prefs.getString("nickname", "User"))
+        freqInput.setText(prefs.getString("freq", "433025000"))
+
         view.findViewById<Button>(R.id.btnSaveSettings).setOnClickListener {
             prefs.edit().putString("nickname", nickInput.text.toString()).apply()
-            Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
+            prefs.edit().putString("freq", freqInput.text.toString()).apply()
+            Toast.makeText(this, "Settings Saved", Toast.LENGTH_SHORT).show()
         }
 
         val btSpinner = view.findViewById<Spinner>(R.id.setBtSpinner)
@@ -94,11 +98,8 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             if (btSpinner.selectedItem != null) {
                 val mac = btSpinner.selectedItem.toString().substringAfterLast("\n")
                 hotConnect(mac)
-            } else {
-                Toast.makeText(this, "No RNode Selected", Toast.LENGTH_SHORT).show()
             }
         }
-
         replaceFrame(view)
     }
 
@@ -107,12 +108,12 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         val lv = view.findViewById<ListView>(R.id.nodeListView)
         lv.adapter = nodesAdapter
         lv.setOnItemClickListener { _, _, i, _ ->
-            targetHash = discoveredNodes[i]
+            targetHash = discoveredNodes[i].split(" ").last().replace("(", "").replace(")", "")
             findViewById<BottomNavigationView>(R.id.bottom_nav).selectedItemId = R.id.nav_chat
-            Toast.makeText(this, "Chatting with: ${targetHash.take(6)}", Toast.LENGTH_SHORT).show()
         }
         lv.setOnItemLongClickListener { _, _, i, _ ->
-            editNodeNickname(discoveredNodes[i])
+            val rawHex = discoveredNodes[i].split(" ").last().replace("(", "").replace(")", "")
+            editNodeNickname(rawHex)
             true
         }
         view.findViewById<Button>(R.id.btnManualAdd).setOnClickListener { manualAddNode() }
@@ -121,31 +122,21 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
     private fun showChat() {
         val view = layoutInflater.inflate(R.layout.page_chat, null)
-        val rv = view.findViewById<RecyclerView>(R.id.chatRv)
-        rv.layoutManager = LinearLayoutManager(this)
-        rv.adapter = chatAdapter
+        chatRecyclerView = view.findViewById(R.id.chatRv)
+        chatRecyclerView?.layoutManager = LinearLayoutManager(this)
+        chatRecyclerView?.adapter = chatAdapter
         
         val input = view.findViewById<EditText>(R.id.chatInput)
         view.findViewById<Button>(R.id.btnChatSend).setOnClickListener {
             val txt = input.text.toString().trim()
             if (targetHash.isNotEmpty() && txt.isNotEmpty()) {
                 onNewMessage(ownHash, txt, System.currentTimeMillis(), false, true)
-                Thread { 
-                    try {
-                        Python.getInstance().getModule("rns_backend").callAttr("send_text", targetHash, txt) 
-                    } catch (e: Exception) { Log.e("RNS_HELLO", "Send Err: ${e.message}") }
-                }.start()
+                Thread { Python.getInstance().getModule("rns_backend").callAttr("send_text", targetHash, txt) }.start()
                 input.setText("")
-            } else if (targetHash.isEmpty()) {
-                Toast.makeText(this, "Go to Nodes tab and select a target!", Toast.LENGTH_SHORT).show()
             }
         }
         view.findViewById<Button>(R.id.btnChatImg).setOnClickListener {
-            if (targetHash.isEmpty()) {
-                Toast.makeText(this, "Go to Nodes tab and select a target!", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            startActivityForResult(Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI), 101)
+            if (targetHash.isNotEmpty()) startActivityForResult(Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI), 101)
         }
         replaceFrame(view)
     }
@@ -156,18 +147,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         container.addView(v)
     }
 
-    // --- LOGIC ---
-
-    private fun showQr(data: String) {
-        val writer = QRCodeWriter()
-        val bitMatrix = writer.encode(data, BarcodeFormat.QR_CODE, 512, 512)
-        val bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.RGB_565)
-        for (x in 0..511) for (y in 0..511) bmp.setPixel(x, y, if (bitMatrix.get(x, y)) Color.BLACK else Color.WHITE)
-        val img = ImageView(this)
-        img.setImageBitmap(bmp)
-        AlertDialog.Builder(this).setTitle("Your RNS Address").setView(img).setPositiveButton("Close", null).show()
-    }
-
     private fun startRns() {
         Thread {
             try {
@@ -176,7 +155,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 py.getModule("os").get("environ")?.callAttr("__setitem__", "HOME", filesDir.absolutePath)
                 val nickname = prefs.getString("nickname", "User")
                 ownHash = py.getModule("rns_backend").callAttr("start_rns", filesDir.absolutePath, this, nickname).toString()
-                runOnUiThread { Toast.makeText(this, "RNS Ready", Toast.LENGTH_SHORT).show() }
+                runOnUiThread { Toast.makeText(this, "RNS Node Online", Toast.LENGTH_SHORT).show() }
             } catch (e: Exception) { Log.e("RNS", e.message ?: "") }
         }.start()
     }
@@ -189,18 +168,14 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 val m = dev.javaClass.getMethod("createInsecureRfcommSocket", Int::class.javaPrimitiveType)
                 btSocket = m.invoke(dev, 1) as BluetoothSocket
                 btSocket?.connect()
-                
-                tcpServer = ServerSocket()
-                tcpServer?.reuseAddress = true
+                tcpServer = ServerSocket(); tcpServer?.reuseAddress = true
                 tcpServer?.bind(InetSocketAddress("127.0.0.1", 7633))
                 isBridging = true
                 Thread { bridgeLoop() }.start()
-                
-                // Fixed defaults since we removed setFreq inputs temporarily
-                val freq = "433025000"
-                val pyStatus = Python.getInstance().getModule("rns_backend").callAttr("inject_rnode", freq, "125000", "17", "8", "6").toString()
+                val f = prefs.getString("freq", "433025000") ?: "433025000"
+                val pyStatus = Python.getInstance().getModule("rns_backend").callAttr("inject_rnode", f, "125000", "17", "8", "6").toString()
                 runOnUiThread { Toast.makeText(this, "RNode: $pyStatus", Toast.LENGTH_SHORT).show() }
-            } catch (e: Exception) { runOnUiThread { Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show() } }
+            } catch (e: Exception) { runOnUiThread { Toast.makeText(this, "BT Error: ${e.message}", Toast.LENGTH_LONG).show() } }
         }.start()
     }
 
@@ -208,10 +183,8 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         while(isBridging) {
             try {
                 val client = tcpServer?.accept() ?: break
-                val btIn = btSocket?.inputStream
-                val btOut = btSocket?.outputStream
-                val tcpIn = client.inputStream
-                val tcpOut = client.outputStream
+                val btIn = btSocket?.inputStream; val btOut = btSocket?.outputStream
+                val tcpIn = client.inputStream; val tcpOut = client.outputStream
                 Thread { try { tcpIn.copyTo(btOut!!) } catch(e:Exception){} finally { client.close() } }.start()
                 Thread { try { btIn?.copyTo(tcpOut!!) } catch(e:Exception){} finally { client.close() } }.start()
             } catch (e: Exception) { break }
@@ -231,18 +204,28 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                     val out = FileOutputStream(f)
                     thumb.compress(Bitmap.CompressFormat.WEBP, 5, out)
                     out.close()
-                    
                     onNewMessage(ownHash, f.absolutePath, System.currentTimeMillis(), true, true)
                     Python.getInstance().getModule("rns_backend").callAttr("send_image", targetHash, f.absolutePath)
-                } catch (e: Exception) { Log.e("RNS_HELLO", "Img Err: ${e.message}") }
+                } catch (e: Exception) { Log.e("RNS", "Img Err: ${e.message}") }
             }.start()
         }
     }
 
+    private fun showQr(data: String) {
+        val writer = QRCodeWriter()
+        val bitMatrix = writer.encode(data, BarcodeFormat.QR_CODE, 512, 512)
+        val bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.RGB_565)
+        for (x in 0..511) for (y in 0..511) bmp.setPixel(x, y, if (bitMatrix.get(x, y)) Color.BLACK else Color.WHITE)
+        val img = ImageView(this); img.setImageBitmap(bmp)
+        AlertDialog.Builder(this).setTitle("Scan My Address").setView(img).show()
+    }
+
     override fun onAnnounceReceived(hex: String) {
-        runOnUiThread { 
-            if(!discoveredNodes.contains(hex)) { 
-                discoveredNodes.add(hex)
+        runOnUiThread {
+            val nick = prefs.getString("nick_$hex", "")
+            val displayStr = if (nick!!.isNotEmpty()) "$nick ($hex)" else hex
+            if(!discoveredNodes.contains(displayStr) && !discoveredNodes.any { it.contains(hex) }) { 
+                discoveredNodes.add(displayStr)
                 nodesAdapter.notifyDataSetChanged() 
             } 
         }
@@ -251,47 +234,39 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     override fun onNewMessage(s: String, c: String, t: Long, img: Boolean, sent: Boolean) {
         runOnUiThread { 
             chatAdapter.addMessage(Message(s, c, t, img, sent)) 
-            chatRecyclerView.scrollToPosition(chatAdapter.itemCount - 1)
+            chatRecyclerView?.scrollToPosition(chatAdapter.itemCount - 1)
         }
     }
 
     private fun manualAddNode() {
-        val input = EditText(this)
-        input.hint = "Hex Address"
-        AlertDialog.Builder(this).setTitle("Add Node").setView(input)
+        val input = EditText(this); input.hint = "32-char Hex Address"
+        AlertDialog.Builder(this).setTitle("Manual Add").setView(input)
             .setPositiveButton("Add") { _,_ -> onAnnounceReceived(input.text.toString().trim()) }.show()
     }
 
     private fun editNodeNickname(hex: String) {
-        val input = EditText(this)
-        input.hint = "Nickname"
-        AlertDialog.Builder(this).setTitle("Set Nickname for ${hex.take(6)}").setView(input)
+        val input = EditText(this); input.hint = "Nickname"
+        AlertDialog.Builder(this).setTitle("Nickname for ${hex.take(6)}").setView(input)
             .setPositiveButton("Save") { _,_ -> 
                 prefs.edit().putString("nick_$hex", input.text.toString()).apply()
-                // Update list view string to show nickname
-                val index = discoveredNodes.indexOf(hex)
-                if (index != -1) {
-                    discoveredNodes[index] = "${input.text} ($hex)"
-                    nodesAdapter.notifyDataSetChanged()
-                }
+                discoveredNodes.removeAll { it.contains(hex) }
+                onAnnounceReceived(hex)
             }.show()
     }
 
     private fun checkPermissions(): Boolean {
         val p = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_ADMIN)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            p.add(Manifest.permission.BLUETOOTH_CONNECT)
-            p.add(Manifest.permission.BLUETOOTH_SCAN)
+            p.add(Manifest.permission.BLUETOOTH_CONNECT); p.add(Manifest.permission.BLUETOOTH_SCAN)
         }
         if (p.any { ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }) {
-            ActivityCompat.requestPermissions(this, p.toTypedArray(), 1)
-            return false
+            ActivityCompat.requestPermissions(this, p.toTypedArray(), 1); return false
         }
         return true
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) startStack()
+        if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) startRns()
     }
 }
