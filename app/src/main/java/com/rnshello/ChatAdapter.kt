@@ -1,100 +1,66 @@
 package com.rnshello
 
 import android.graphics.BitmapFactory
-import android.view.LayoutInflater
-import android.view.View
-import android.view.ViewGroup
-import android.widget.ImageView
-import android.widget.TextView
+import android.view.*
+import android.widget.*
 import androidx.recyclerview.widget.RecyclerView
 
-class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
-
+class ChatAdapter(private val onImageClick: (String) -> Unit) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     private val messages = mutableListOf<Message>()
+    private val messageMap = mutableMapOf<String, Int>() // To find messages for ticks
 
-    fun addMessage(message: Message) {
+    fun addMessage(message: Message, lxmfId: String? = null) {
         messages.add(message)
+        if (lxmfId != null) messageMap[lxmfId] = messages.size - 1
         notifyItemInserted(messages.size - 1)
     }
 
-    override fun getItemCount(): Int = messages.size
-
-    override fun getItemViewType(position: Int): Int {
-        val message = messages[position]
-        return when {
-            message.isSent && !message.isImage -> VIEW_TYPE_SENT_TEXT
-            !message.isSent && !message.isImage -> VIEW_TYPE_RECEIVED_TEXT
-            message.isSent && message.isImage -> VIEW_TYPE_SENT_IMAGE
-            else -> VIEW_TYPE_RECEIVED_IMAGE // !message.isSent && message.isImage
+    fun markDelivered(lxmfId: String) {
+        val index = messageMap[lxmfId]
+        if (index != null) {
+            messages[index].isDelivered = true
+            notifyItemChanged(index)
         }
+    }
+
+    override fun getItemViewType(pos: Int) = when {
+        messages[pos].isSent && !messages[pos].isImage -> 1
+        !messages[pos].isSent && !messages[pos].isImage -> 2
+        messages[pos].isSent && messages[pos].isImage -> 3
+        else -> 4
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
         val inflater = LayoutInflater.from(parent.context)
         return when (viewType) {
-            VIEW_TYPE_SENT_TEXT -> SentTextViewHolder(inflater.inflate(R.layout.item_chat_sent_text, parent, false))
-            VIEW_TYPE_RECEIVED_TEXT -> ReceivedTextViewHolder(inflater.inflate(R.layout.item_chat_received_text, parent, false))
-            VIEW_TYPE_SENT_IMAGE -> SentImageViewHolder(inflater.inflate(R.layout.item_chat_sent_image, parent, false))
-            else -> ReceivedImageViewHolder(inflater.inflate(R.layout.item_chat_received_image, parent, false))
+            1 -> SentTextVH(inflater.inflate(R.layout.item_chat_sent_text, parent, false))
+            2 -> RecvTextVH(inflater.inflate(R.layout.item_chat_received_text, parent, false))
+            3 -> SentImgVH(inflater.inflate(R.layout.item_chat_sent_image, parent, false))
+            else -> RecvImgVH(inflater.inflate(R.layout.item_chat_received_image, parent, false))
         }
     }
 
-    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-        val message = messages[position]
-        when (holder.itemViewType) {
-            VIEW_TYPE_SENT_TEXT -> (holder as SentTextViewHolder).bind(message)
-            VIEW_TYPE_RECEIVED_TEXT -> (holder as ReceivedTextViewHolder).bind(message)
-            VIEW_TYPE_SENT_IMAGE -> (holder as SentImageViewHolder).bind(message)
-            VIEW_TYPE_RECEIVED_IMAGE -> (holder as ReceivedImageViewHolder).bind(message)
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, pos: Int) {
+        val m = messages[pos]
+        when(holder) {
+            is SentTextVH -> { holder.t.text = m.content; holder.time.text = m.getFormattedTime(); holder.tick.visibility = if(m.isDelivered) View.VISIBLE else View.GONE }
+            is RecvTextVH -> { holder.t.text = m.content; holder.time.text = m.getFormattedTime() }
+            is SentImgVH -> { 
+                holder.img.setImageBitmap(BitmapFactory.decodeFile(m.content))
+                holder.tick.visibility = if(m.isDelivered) View.VISIBLE else View.GONE
+                holder.img.setOnClickListener { onImageClick(m.content) }
+            }
+            is RecvImgVH -> {
+                holder.img.setImageBitmap(BitmapFactory.decodeFile(m.content))
+                holder.img.setOnClickListener { onImageClick(m.content) }
+            }
         }
     }
 
-    companion object {
-        const val VIEW_TYPE_SENT_TEXT = 1
-        const val VIEW_TYPE_RECEIVED_TEXT = 2
-        const val VIEW_TYPE_SENT_IMAGE = 3
-        const val VIEW_TYPE_RECEIVED_IMAGE = 4
-    }
+    override fun getItemCount() = messages.size
 
-    // --- ViewHolders ---
-
-    class SentTextViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val messageText: TextView = itemView.findViewById(R.id.chatMessageText)
-        private val messageTime: TextView = itemView.findViewById(R.id.chatMessageTime)
-        fun bind(message: Message) {
-            messageText.text = message.content
-            messageTime.text = message.getFormattedTime()
-        }
-    }
-
-    class ReceivedTextViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val senderName: TextView = itemView.findViewById(R.id.chatSenderName)
-        private val messageText: TextView = itemView.findViewById(R.id.chatMessageText)
-        private val messageTime: TextView = itemView.findViewById(R.id.chatMessageTime)
-        fun bind(message: Message) {
-            senderName.text = message.senderHash.take(6) // Shorten hash for display
-            messageText.text = message.content
-            messageTime.text = message.getFormattedTime()
-        }
-    }
-
-    class SentImageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val messageImage: ImageView = itemView.findViewById(R.id.chatMessageImage)
-        private val messageTime: TextView = itemView.findViewById(R.id.chatMessageTime)
-        fun bind(message: Message) {
-            messageImage.setImageBitmap(BitmapFactory.decodeFile(message.content)) // content is imagePath
-            messageTime.text = message.getFormattedTime()
-        }
-    }
-
-    class ReceivedImageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val senderName: TextView = itemView.findViewById(R.id.chatSenderName)
-        private val messageImage: ImageView = itemView.findViewById(R.id.chatMessageImage)
-        private val messageTime: TextView = itemView.findViewById(R.id.chatMessageTime)
-        fun bind(message: Message) {
-            senderName.text = message.senderHash.take(6)
-            messageImage.setImageBitmap(BitmapFactory.decodeFile(message.content))
-            messageTime.text = message.getFormattedTime()
-        }
-    }
+    class SentTextVH(v: View): RecyclerView.ViewHolder(v) { val t=v.findViewById<TextView>(R.id.chatMessageText); val time=v.findViewById<TextView>(R.id.chatMessageTime); val tick=v.findViewById<TextView>(R.id.tickStatus) }
+    class RecvTextVH(v: View): RecyclerView.ViewHolder(v) { val t=v.findViewById<TextView>(R.id.chatMessageText); val time=v.findViewById<TextView>(R.id.chatMessageTime) }
+    class SentImgVH(v: View): RecyclerView.ViewHolder(v) { val img=v.findViewById<ImageView>(R.id.chatMessageImage); val tick=v.findViewById<TextView>(R.id.tickStatus); val time=v.findViewById<TextView>(R.id.chatMessageTime) }
+    class RecvImgVH(v: View): RecyclerView.ViewHolder(v) { val img=v.findViewById<ImageView>(R.id.chatMessageImage); val time=v.findViewById<TextView>(R.id.chatMessageTime) }
 }
