@@ -32,6 +32,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.util.*
 
 class MainActivity : AppCompatActivity(), RnsCallback {
     private lateinit var prefs: SharedPreferences
@@ -85,6 +86,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
     private fun startRns() {
         val savedMac = prefs.getString("last_mac", "") ?: ""
+        // Start Service to handle BT connection completely independently
         val intent = Intent(this, RnsService::class.java).apply { putExtra("mac", savedMac) }
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
         
@@ -96,8 +98,9 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 val nick = prefs.getString("my_nickname", "User")
                 ownHash = py.getModule("rns_backend").callAttr("start_rns", filesDir.absolutePath, this, nick).toString()
                 
+                // If we have a saved MAC, inject parameters
                 if (savedMac.isNotEmpty()) {
-                    Thread.sleep(1500) 
+                    Thread.sleep(2500) // Wait for Background Service to bind TCP
                     val f = when(prefs.getInt("sel_region", 0)) { 0 -> "433025000"; 1 -> "915000000"; else -> "433000000" }
                     val bw = when(prefs.getInt("sel_bw", 0)) { 0 -> "125000"; 1 -> "62500"; else -> "31250" }
                     val sf = (prefs.getInt("sel_sf", 1) + 7).toString()
@@ -106,6 +109,29 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 }
                 runOnUiThread { if (currentViewType == 1) showSettings() }
             } catch (e: Exception) {}
+        }.start()
+    }
+
+    private fun connectAndTune(mac: String) {
+        Thread {
+            try {
+                runOnUiThread { Toast.makeText(this@MainActivity, "Starting BT Bridge...", Toast.LENGTH_SHORT).show() }
+                
+                val intent = Intent(this@MainActivity, RnsService::class.java).apply { putExtra("mac", mac) }
+                if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
+                
+                Thread.sleep(3000) 
+                
+                val f = when(prefs.getInt("sel_region", 0)) { 0 -> "433025000"; 1 -> "915000000"; else -> "433000000" }
+                val bw = when(prefs.getInt("sel_bw", 0)) { 0 -> "125000"; 1 -> "62500"; else -> "31250" }
+                val sf = (prefs.getInt("sel_sf", 1) + 7).toString()
+                val cr = (prefs.getInt("sel_cr", 1) + 5).toString()
+
+                val pyStatus = Python.getInstance().getModule("rns_backend").callAttr("inject_rnode", f, bw, "17", sf, cr).toString()
+                runOnUiThread { Toast.makeText(this@MainActivity, "RNode: $pyStatus", Toast.LENGTH_SHORT).show() }
+            } catch (e: Exception) {
+                Log.e("RNS", "Tune Error", e)
+            }
         }.start()
     }
 
@@ -125,6 +151,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         }
         view.findViewById<Button>(R.id.btnManualAnnounce).setOnClickListener {
             Thread { Python.getInstance().getModule("rns_backend").callAttr("announce_now") }.start()
+            Toast.makeText(this, "Broadcasting...", Toast.LENGTH_SHORT).show()
         }
         replaceFrame(view)
     }
@@ -142,6 +169,17 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         
         val spinRegion = view.findViewById<Spinner>(R.id.spinRegion)
         spinRegion.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, arrayOf("Europe (433MHz)", "USA (915MHz)", "Asia (433MHz)"))
+        val spinBw = view.findViewById<Spinner>(R.id.spinBw)
+        spinBw.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, arrayOf("125 kHz", "62.5 kHz", "31.25 kHz"))
+        val spinSf = view.findViewById<Spinner>(R.id.spinSf)
+        spinSf.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, (7..12).map { "SF $it" })
+        val spinCr = view.findViewById<Spinner>(R.id.spinCr)
+        spinCr.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, (5..8).map { "CR $it" })
+        
+        spinRegion.setSelection(prefs.getInt("sel_region", 0))
+        spinBw.setSelection(prefs.getInt("sel_bw", 0))
+        spinSf.setSelection(prefs.getInt("sel_sf", 1))
+        spinCr.setSelection(prefs.getInt("sel_cr", 1))
         
         val btSpinner = view.findViewById<Spinner>(R.id.setBtSpinner)
         val updateBT = {
@@ -154,12 +192,26 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         view.findViewById<Button>(R.id.btnRefreshBt).setOnClickListener { showSettings() }
         view.findViewById<Button>(R.id.btnSetConnect).setOnClickListener {
             val mac = btSpinner.selectedItem.toString().substringAfterLast("\n")
-            prefs.edit().putString("last_mac", mac).apply()
-            Toast.makeText(this, "Connecting to RNode in Background...", Toast.LENGTH_SHORT).show()
-            startRns() 
+            prefs.edit().apply {
+                putString("last_mac", mac)
+                putString("my_nickname", view.findViewById<EditText>(R.id.setNick).text.toString())
+                putInt("sel_region", spinRegion.selectedItemPosition)
+                putInt("sel_bw", spinBw.selectedItemPosition)
+                putInt("sel_sf", spinSf.selectedItemPosition)
+                putInt("sel_cr", spinCr.selectedItemPosition)
+                apply()
+            }
+            connectAndTune(mac)
         }
         view.findViewById<Button>(R.id.btnSaveSettings).setOnClickListener {
-            prefs.edit().putString("my_nickname", view.findViewById<EditText>(R.id.setNick).text.toString()).apply()
+            prefs.edit().apply {
+                putString("my_nickname", view.findViewById<EditText>(R.id.setNick).text.toString())
+                putInt("sel_region", spinRegion.selectedItemPosition)
+                putInt("sel_bw", spinBw.selectedItemPosition)
+                putInt("sel_sf", spinSf.selectedItemPosition)
+                putInt("sel_cr", spinCr.selectedItemPosition)
+                apply()
+            }
             Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
         }
         replaceFrame(view)
@@ -259,8 +311,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             .setContentTitle("Msg: $nick")
             .setContentText(text)
             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
-        
-        // THE FIX: Use System.currentTimeMillis().toInt() instead of Random()
         androidx.core.app.NotificationManagerCompat.from(this).notify(System.currentTimeMillis().toInt(), builder.build())
     }
 

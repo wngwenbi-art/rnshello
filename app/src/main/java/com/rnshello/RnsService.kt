@@ -9,6 +9,7 @@ import android.bluetooth.BluetoothSocket
 import android.content.Context
 import java.net.InetSocketAddress
 import java.net.ServerSocket
+import android.util.Log
 
 class RnsService : Service() {
     private var btSocket: BluetoothSocket? = null
@@ -62,9 +63,12 @@ class RnsService : Service() {
                     val btIn = btSocket?.inputStream; val btOut = btSocket?.outputStream
                     val tcpIn = client.inputStream; val tcpOut = client.outputStream
                     Thread { try { val buf = ByteArray(1024); var r=0; while(isBridging && tcpIn.read(buf).also{r=it}!=-1) btOut?.write(buf,0,r) } catch(e:Exception){} }.start()
-                    Thread { try { val buf = ByteArray(1024); var r=0; while(isBridging && btIn!!.read(buf).also{r=it}!=-1) tcpOut.write(buf,0,r) } catch(e:Exception){} finally{client.close()} }.start()
+                    Thread { try { val buf = ByteArray(1024); var r=0; while(isBridging && btIn!!.read(buf).also{r=it}!=-1) {tcpOut.write(buf,0,r); tcpOut.flush()} } catch(e:Exception){} finally{client.close()} }.start()
                 }
-            } catch (e: Exception) { currentMac = "" }
+            } catch (e: Exception) { 
+                currentMac = "" 
+                Log.e("RNS_SERVICE", "BT Bridge failed", e)
+            }
         }.start()
     }
 

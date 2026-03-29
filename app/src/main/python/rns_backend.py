@@ -2,7 +2,7 @@ import os, sys, time, base64
 from types import ModuleType
 import importlib.util, importlib.machinery
 
-# --- SIDEBAND/COLUMBA COMPATIBILITY MOCKS ---
+# --- SIDEBAND/COLUMBA MOCKS ---
 class Dummy:
     def __getattr__(self, name): return Dummy()
     def __call__(self, *args, **kwargs): return Dummy()
@@ -26,11 +26,14 @@ local_destination = None
 kotlin_callback = None
 is_rns_running = False
 
+def log(msg):
+    print(f"RNS-LOG: {msg}")
+    sys.stdout.flush()
+
 def start_rns(storage_path, callback_obj, nickname):
     global router, local_destination, kotlin_callback, is_rns_running
     kotlin_callback = callback_obj
     
-    # FIX: If Reticulum is already running, just update the callback and return the hash
     if is_rns_running and local_destination is not None:
         return RNS.hexrep(local_destination.hash, False)
         
@@ -46,15 +49,12 @@ def start_rns(storage_path, callback_obj, nickname):
         with open(config_path, "w") as f:
             f.write("[reticulum]\nenable_transport = True\nshare_instance = Yes\n\n[interfaces]")
     
-    # FIX: Catch the "already running" error just in case of race conditions
-    try:
-        RNS.Reticulum(configdir=rns_dir)
+    try: RNS.Reticulum(configdir=rns_dir)
     except OSError as e:
         if "already running" not in str(e): raise e
     
     id_path = os.path.join(rns_dir, "storage_identity")
-    if os.path.exists(id_path):
-        local_id = RNS.Identity.from_file(id_path)
+    if os.path.exists(id_path): local_id = RNS.Identity.from_file(id_path)
     else:
         local_id = RNS.Identity()
         local_id.to_file(id_path)
@@ -64,14 +64,20 @@ def start_rns(storage_path, callback_obj, nickname):
     router.register_delivery_callback(on_lxmf)
     
     RNS.Transport.register_announce_handler(discovery_handler())
-    
     is_rns_running = True
     return RNS.hexrep(local_destination.hash, False)
 
 class discovery_handler:
     def __init__(self): self.aspect_filter = None
-    def received_announce(self, dest_hash, id, data):
-        if kotlin_callback: kotlin_callback.onAnnounceReceived(RNS.hexrep(dest_hash, False))
+    
+    # THE FIX: These parameters must EXACTLY match what Reticulum sends
+    def received_announce(self, destination_hash, announced_identity, app_data):
+        try:
+            h = RNS.hexrep(destination_hash, False)
+            n = app_data.decode("utf-8") if app_data else ""
+            log(f"Heard announce from {h} (Nick: {n})")
+            if kotlin_callback: kotlin_callback.onAnnounceReceived(h, n)
+        except Exception as e: log(f"Announce Error: {e}")
 
 def on_lxmf(lxm):
     sender = RNS.hexrep(lxm.source_hash, False)
@@ -81,7 +87,6 @@ def on_lxmf(lxm):
         if kotlin_callback: kotlin_callback.onMessageDelivered(content[4:])
         return
 
-    # Auto ACK
     try:
         dest_id = RNS.Identity.recall(lxm.source_hash)
         ack_dest = RNS.Destination(dest_id, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
@@ -98,25 +103,28 @@ def on_lxmf(lxm):
     if kotlin_callback: kotlin_callback.onNewMessage(sender, data, int(time.time()*1000), is_img, False, RNS.hexrep(lxm.hash, False))
 
 def inject_rnode(freq, bw, tx, sf, cr):
+    log(f"Injecting RNode: {freq}Hz {bw}Hz {tx}dBm SF{sf} CR{cr}")
     try:
-        # FIX: Remove any old bridges so we don't accidentally send data twice or crash
+        # THE FIX: Clean up old interfaces before injecting a new one
         to_remove =[]
         for ifac in RNS.Transport.interfaces:
-            if ifac.name == "Bridge":
-                to_remove.append(ifac)
+            if ifac.name == "Android RNode Bridge": to_remove.append(ifac)
         for ifac in to_remove:
             ifac.teardown()
             RNS.Transport.interfaces.remove(ifac)
+            time.sleep(0.5)
 
-        ictx = {"name": "Bridge", "type": "RNodeInterface", "interface_enabled": True, "outgoing": True,
+        ictx = {"name": "Android RNode Bridge", "type": "RNodeInterface", "interface_enabled": True, "outgoing": True,
                 "tcp_host": "127.0.0.1", "tcp_port": 7633, "frequency": int(freq), "bandwidth": int(bw),
                 "txpower": int(tx), "spreadingfactor": int(sf), "codingrate": int(cr), "flow_control": False}
+        
         ifac = RNodeInterface(RNS.Transport, ictx)
         ifac.mode = Interface.MODE_FULL
         ifac.IN = True; ifac.OUT = True
         RNS.Transport.interfaces.append(ifac)
-        time.sleep(1)
-        local_destination.announce()
+        
+        time.sleep(1.5)
+        announce_now()
         return "ONLINE"
     except Exception as e: return str(e)
 
@@ -133,4 +141,7 @@ def send_image(dest_hex, path):
     with open(path, "rb") as f: data = base64.b64encode(f.read()).decode("utf-8")
     return send_text(dest_hex, f"IMG:{data}")
 
-def announce_now(): local_destination.announce()
+def announce_now():
+    if local_destination:
+        nick = local_destination.display_name if local_destination.display_name else ""
+        local_destination.announce(app_data=nick.encode("utf-8"))
