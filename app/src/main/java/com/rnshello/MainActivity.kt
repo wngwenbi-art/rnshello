@@ -20,7 +20,6 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.chaquo.python.Python
@@ -34,7 +33,6 @@ import java.io.FileOutputStream
 import java.util.*
 
 class MainActivity : AppCompatActivity(), RnsCallback {
-
     private lateinit var prefs: SharedPreferences
     private var ownHash = ""
     private var targetHash = ""
@@ -47,25 +45,19 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        
         val toolbar = findViewById<Toolbar>(R.id.toolbar)
         setSupportActionBar(toolbar)
-
         prefs = getSharedPreferences("rns_database", MODE_PRIVATE)
         chatAdapter = ChatAdapter(this) { path -> showBigImage(path) }
         nodesAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, discoveredNodes)
-
         loadSavedNodes()
-
         val nav = findViewById<BottomNavigationView>(R.id.bottom_nav)
         nav.setOnItemSelectedListener { item ->
             when(item.itemId) {
                 R.id.nav_nodes -> { currentViewType = 2; showNodes() }
                 R.id.nav_chat -> { currentViewType = 3; showChat() }
-            }
-            true
+            }; true
         }
-
         if (checkPermissions()) startRns()
         showNodes()
     }
@@ -75,73 +67,36 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         return true
     }
 
+    override fun onPrepareOptionsMenu(menu: Menu?): Boolean {
+        menu?.findItem(R.id.action_add_node)?.isVisible = (currentViewType == 2)
+        return super.onPrepareOptionsMenu(menu)
+    }
+
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         when(item.itemId) {
             R.id.action_add_node -> IntentIntegrator(this).setOrientationLocked(false).initiateScan()
             R.id.action_settings -> { currentViewType = 1; showSettings() }
-        }
-        return true
+        }; return true
     }
 
     private fun startRns() {
-        // Start Foreground Service to keep BT connection alive
         val savedMac = prefs.getString("last_mac", "") ?: ""
-        val serviceIntent = Intent(this, RnsService::class.java).apply {
-            putExtra("mac", savedMac)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-        } else {
-            startService(serviceIntent)
-        }
-
+        val intent = Intent(this, RnsService::class.java).apply { putExtra("mac", savedMac) }
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
         Thread {
             try {
                 if (!Python.isStarted()) Python.start(AndroidPlatform(this))
                 val py = Python.getInstance()
                 py.getModule("os").get("environ")?.callAttr("__setitem__", "HOME", filesDir.absolutePath)
-                val nick = prefs.getString("my_nickname", "User")
-                ownHash = py.getModule("rns_backend").callAttr("start_rns", filesDir.absolutePath, this, nick).toString()
+                ownHash = py.getModule("rns_backend").callAttr("start_rns", filesDir.absolutePath, this, prefs.getString("my_nickname", "User")).toString()
                 runOnUiThread { if (currentViewType == 1) showSettings() }
-            } catch (e: Exception) { Log.e("RNS", e.message ?: "") }
+            } catch (e: Exception) {}
         }.start()
-    }
-
-    private fun showSettings() {
-        currentViewType = 1
-        supportActionBar?.title = "Settings"
-        val view = layoutInflater.inflate(R.layout.page_settings, null)
-        val addressDisplay = view.findViewById<TextView>(R.id.addressDisplay)
-        val nickInput = view.findViewById<EditText>(R.id.setNick)
-        addressDisplay.text = if(ownHash.isEmpty()) "Connecting..." else ownHash
-        addressDisplay.setOnClickListener { if(ownHash.isNotEmpty()) showQr(ownHash) }
-        nickInput.setText(prefs.getString("my_nickname", "User"))
-
-        val spinRegion = view.findViewById<Spinner>(R.id.spinRegion)
-        spinRegion.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, arrayOf("Europe (433MHz)", "USA (915MHz)", "Asia (433MHz)"))
-        
-        val btSpinner = view.findViewById<Spinner>(R.id.setBtSpinner)
-        val updateBT = {
-            val adapter = BluetoothAdapter.getDefaultAdapter()
-            if (adapter != null && ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                val names = adapter.bondedDevices.map { "${it.name}\n${it.address}" }
-                btSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, names)
-            }
-        }
-        updateBT()
-
-        view.findViewById<Button>(R.id.btnSetConnect).setOnClickListener {
-            if (btSpinner.selectedItem != null) {
-                val mac = btSpinner.selectedItem.toString().substringAfterLast("\n")
-                prefs.edit().putString("last_mac", mac).commit()
-                startRns() // Restart stack with new MAC
-            }
-        }
-        replaceFrame(view)
     }
 
     private fun showNodes() {
         currentViewType = 2
+        invalidateOptionsMenu()
         supportActionBar?.title = "Nodes"
         val view = layoutInflater.inflate(R.layout.page_nodes, null)
         val lv = view.findViewById<ListView>(R.id.nodeListView)
@@ -159,16 +114,51 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         replaceFrame(view)
     }
 
+    private fun showSettings() {
+        currentViewType = 1
+        invalidateOptionsMenu()
+        supportActionBar?.title = "Settings"
+        val view = layoutInflater.inflate(R.layout.page_settings, null)
+        view.findViewById<TextView>(R.id.addressDisplay).apply {
+            text = if(ownHash.isEmpty()) "Initializing..." else ownHash
+            setOnClickListener { if(ownHash.isNotEmpty()) showQr(ownHash) }
+        }
+        view.findViewById<EditText>(R.id.setNick).setText(prefs.getString("my_nickname", "User"))
+        
+        val spinRegion = view.findViewById<Spinner>(R.id.spinRegion)
+        spinRegion.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, arrayOf("Europe (433MHz)", "USA (915MHz)", "Asia (433MHz)"))
+        
+        val btSpinner = view.findViewById<Spinner>(R.id.setBtSpinner)
+        val updateBT = {
+            val adapter = BluetoothAdapter.getDefaultAdapter()
+            if (adapter != null && ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                btSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, adapter.bondedDevices.map { "${it.name}\n${it.address}" })
+            }
+        }
+        updateBT()
+        view.findViewById<Button>(R.id.btnRefreshBt).setOnClickListener { updateBT() }
+        view.findViewById<Button>(R.id.btnSetConnect).setOnClickListener {
+            val mac = btSpinner.selectedItem.toString().substringAfterLast("\n")
+            prefs.edit().putString("last_mac", mac).commit()
+            startRns()
+        }
+        view.findViewById<Button>(R.id.btnSaveSettings).setOnClickListener {
+            prefs.edit().putString("my_nickname", view.findViewById<EditText>(R.id.setNick).text.toString()).apply()
+            Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
+        }
+        replaceFrame(view)
+    }
+
     private fun showChat() {
         currentViewType = 3
+        invalidateOptionsMenu()
         val nick = prefs.getString("nick_$targetHash", "")
-        supportActionBar?.title = if (!nick.isNullOrEmpty()) nick else "Chat: ${targetHash.take(6)}"
+        supportActionBar?.title = if (!nick.isNullOrEmpty()) nick else targetHash.take(6)
         val view = layoutInflater.inflate(R.layout.page_chat, null)
         chatRecyclerView = view.findViewById(R.id.chatRv)
         chatRecyclerView?.layoutManager = LinearLayoutManager(this)
         chatRecyclerView?.adapter = chatAdapter
-        
-        view.findViewById<Button>(R.id.btnChatSend).setOnClickListener {
+        view.findViewById<ImageButton>(R.id.btnChatSend).setOnClickListener {
             val input = view.findViewById<EditText>(R.id.chatInput)
             val txt = input.text.toString().trim()
             if (targetHash.isNotEmpty() && txt.isNotEmpty()) {
@@ -177,15 +167,16 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 input.setText("")
             }
         }
+        view.findViewById<ImageButton>(R.id.btnChatImg).setOnClickListener {
+            if (targetHash.isNotEmpty()) startActivityForResult(Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI), 101)
+        }
         replaceFrame(view)
     }
 
     override fun onAnnounceReceived(hex: String, nickname: String) {
         if (nickname.isNotEmpty()) prefs.edit().putString("nick_$hex", nickname).apply()
-        val currentSet = prefs.getStringSet("node_list", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
-        if (!currentSet.contains(hex)) {
-            currentSet.add(hex); prefs.edit().putStringSet("node_list", currentSet).apply()
-        }
+        val list = prefs.getStringSet("node_list", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+        list.add(hex); prefs.edit().putStringSet("node_list", list).apply()
         runOnUiThread { loadSavedNodes() }
     }
 
@@ -193,24 +184,15 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         runOnUiThread { 
             chatAdapter.addMessage(Message(senderHash = s, content = c, timestamp = t, isImage = img, isSent = sent), id)
             chatRecyclerView?.scrollToPosition(chatAdapter.itemCount - 1)
-            if (!sent) showNotification(s, if(img) "Sent an image" else c)
         }
     }
 
-    private fun showNotification(sender: String, text: String) {
-        val nick = prefs.getString("nick_$sender", sender.take(6))
-        val builder = androidx.core.app.NotificationCompat.Builder(this, "RNS_CHANNEL")
-            .setSmallIcon(android.R.drawable.stat_notify_chat)
-            .setContentTitle("Message from $nick")
-            .setContentText(text)
-            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
-        androidx.core.app.NotificationManagerCompat.from(this).notify(Random().nextInt(), builder.build())
-    }
+    override fun onMessageDelivered(id: String) { runOnUiThread { chatAdapter.markDelivered(id) } }
 
     private fun loadSavedNodes() {
-        val savedHashes = prefs.getStringSet("node_list", setOf()) ?: setOf()
+        val list = prefs.getStringSet("node_list", setOf()) ?: setOf()
         discoveredNodes.clear()
-        for (hex in savedHashes) {
+        for (hex in list) {
             val nick = prefs.getString("nick_$hex", "")
             discoveredNodes.add(if (!nick.isNullOrEmpty()) "$nick ($hex)" else hex)
         }
@@ -222,7 +204,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         val bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.RGB_565)
         for (x in 0..511) for (y in 0..511) bmp.setPixel(x, y, if (bitMatrix.get(x, y)) Color.BLACK else Color.WHITE)
         val img = ImageView(this); img.setImageBitmap(bmp)
-        AlertDialog.Builder(this).setTitle("My RNS Address").setView(img).setPositiveButton("Close", null).show()
+        AlertDialog.Builder(this).setTitle("My RNS Hash").setView(img).setPositiveButton("Close", null).show()
     }
 
     private fun showBigImage(path: String) {
@@ -230,11 +212,8 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         AlertDialog.Builder(this).setView(img).setPositiveButton("Close", null).show()
     }
 
-    override fun onMessageDelivered(id: String) { runOnUiThread { chatAdapter.markDelivered(id) } }
-
     private fun replaceFrame(v: View) {
-        val container = findViewById<FrameLayout>(R.id.fragment_container)
-        container.removeAllViews(); container.addView(v)
+        findViewById<FrameLayout>(R.id.fragment_container).apply { removeAllViews(); addView(v) }
     }
 
     private fun editNodeNickname(hex: String) {
@@ -246,13 +225,24 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
     private fun checkPermissions(): Boolean {
         val p = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_ADMIN, Manifest.permission.CAMERA)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) { p.add(Manifest.permission.BLUETOOTH_CONNECT); p.add(Manifest.permission.BLUETOOTH_SCAN) }
-        if (p.any { ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }) { ActivityCompat.requestPermissions(this, p.toTypedArray(), 1); return false }
+        if (Build.VERSION.SDK_INT >= 31) { p.add(Manifest.permission.BLUETOOTH_CONNECT); p.add(Manifest.permission.BLUETOOTH_SCAN) }
+        if (p.any { ActivityCompat.checkSelfPermission(this, it) != 0 }) { ActivityCompat.requestPermissions(this, p.toTypedArray(), 1); return false }
         return true
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) startRns()
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        val res = IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
+        if (res != null && res.contents != null) onAnnounceReceived(res.contents.trim(), "")
+        else if (requestCode == 101 && resultCode == -1 && data != null) {
+            Thread {
+                val b = BitmapFactory.decodeStream(contentResolver.openInputStream(data.data!!))
+                val scale = 180f / b.width
+                val thumb = Bitmap.createScaledBitmap(b, 180, (b.height * scale).toInt(), true)
+                val f = File(cacheDir, "out.webp"); val out = FileOutputStream(f)
+                thumb.compress(Bitmap.CompressFormat.WEBP, 4, out); out.close()
+                val id = Python.getInstance().getModule("rns_backend").callAttr("send_image", targetHash, f.absolutePath).toString()
+                onNewMessage(ownHash, f.absolutePath, System.currentTimeMillis(), true, true, id)
+            }.start()
+        }
     }
 }
