@@ -28,10 +28,12 @@ import com.google.zxing.integration.android.IntentIntegrator
 import com.google.zxing.qrcode.QRCodeWriter
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
-import java.util.UUID
+import java.util.*
 
 class MainActivity : AppCompatActivity(), RnsCallback {
 
@@ -45,7 +47,9 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     private lateinit var chatAdapter: ChatAdapter
     private val discoveredNodes = mutableListOf<String>()
     private lateinit var nodesAdapter: ArrayAdapter<String>
-    private var chatRecyclerView: RecyclerView? = null
+    
+    // We keep track of the currently inflated view to update it dynamically
+    private var currentViewType: Int = 0 // 1: Settings, 2: Nodes, 3: Chat
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -60,14 +64,15 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         val nav = findViewById<BottomNavigationView>(R.id.bottom_nav)
         nav.setOnItemSelectedListener { item ->
             when(item.itemId) {
-                R.id.nav_settings -> showSettings()
-                R.id.nav_nodes -> showNodes()
-                R.id.nav_chat -> showChat()
+                R.id.nav_settings -> { currentViewType = 1; showSettings() }
+                R.id.nav_nodes -> { currentViewType = 2; showNodes() }
+                R.id.nav_chat -> { currentViewType = 3; showChat() }
             }
             true
         }
 
         if (checkPermissions()) startRns()
+        currentViewType = 1
         showSettings()
     }
 
@@ -88,6 +93,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         
         addressDisplay.text = if(ownHash.isEmpty()) "Initializing..." else ownHash
         addressDisplay.setOnClickListener { if(ownHash.isNotEmpty()) showQr(ownHash) }
+        
         nickInput.setText(prefs.getString("my_nickname", "User"))
 
         val spinRegion = view.findViewById<Spinner>(R.id.spinRegion)
@@ -100,12 +106,21 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         spinSf.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, (7..12).toList())
         spinCr.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, (5..8).toList())
 
+        spinRegion.setSelection(prefs.getInt("sel_region", 0))
+        spinBw.setSelection(prefs.getInt("sel_bw", 0))
+        spinSf.setSelection(prefs.getInt("sel_sf", 1))
+        spinCr.setSelection(prefs.getInt("sel_cr", 1))
+
         view.findViewById<Button>(R.id.btnSaveSettings).setOnClickListener {
             prefs.edit().apply {
                 putString("my_nickname", nickInput.text.toString())
-                putInt("sel_region", spinRegion.selectedItemPosition); apply()
+                putInt("sel_region", spinRegion.selectedItemPosition)
+                putInt("sel_bw", spinBw.selectedItemPosition)
+                putInt("sel_sf", spinSf.selectedItemPosition)
+                putInt("sel_cr", spinCr.selectedItemPosition)
+                apply()
             }
-            Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Settings Saved", Toast.LENGTH_SHORT).show()
         }
 
         val btSpinner = view.findViewById<Spinner>(R.id.setBtSpinner)
@@ -145,9 +160,9 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         val nick = prefs.getString("nick_$targetHash", "")
         header.text = if (!nick.isNullOrEmpty()) "Chat: $nick" else "Chat: ${targetHash.take(8)}"
 
-        chatRecyclerView = view.findViewById(R.id.chatRv)
-        chatRecyclerView?.layoutManager = LinearLayoutManager(this)
-        chatRecyclerView?.adapter = chatAdapter
+        val rv = view.findViewById<RecyclerView>(R.id.chatRv)
+        rv.layoutManager = LinearLayoutManager(this)
+        rv.adapter = chatAdapter
         
         view.findViewById<Button>(R.id.btnChatSend).setOnClickListener {
             val input = view.findViewById<EditText>(R.id.chatInput)
@@ -172,6 +187,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 py.getModule("os").get("environ")?.callAttr("__setitem__", "HOME", filesDir.absolutePath)
                 val nick = prefs.getString("my_nickname", "User")
                 ownHash = py.getModule("rns_backend").callAttr("start_rns", filesDir.absolutePath, this, nick).toString()
+                runOnUiThread { if (currentViewType == 1) showSettings() } // Update the display
             } catch (e: Exception) { Log.e("RNS", e.message ?: "") }
         }.start()
     }
@@ -187,7 +203,13 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 tcpServer = ServerSocket(); tcpServer?.reuseAddress = true; tcpServer?.bind(InetSocketAddress("127.0.0.1", 7633))
                 isBridging = true
                 Thread { bridgeLoop() }.start()
-                Python.getInstance().getModule("rns_backend").callAttr("inject_rnode", "433025000", "125000", "17", "8", "6")
+                
+                val f = when(prefs.getInt("sel_region", 0)) { 0 -> "433050000"; 1 -> "915000000"; else -> "433000000" }
+                val bw = when(prefs.getInt("sel_bw", 0)) { 0 -> "125000"; 1 -> "62500"; else -> "31250" }
+                val sf = (prefs.getInt("sel_sf", 1) + 7).toString()
+                val cr = (prefs.getInt("sel_cr", 1) + 5).toString()
+
+                Python.getInstance().getModule("rns_backend").callAttr("inject_rnode", f, bw, "17", sf, cr)
                 runOnUiThread { Toast.makeText(this, "RNode Connected", Toast.LENGTH_SHORT).show() }
             } catch (e: Exception) { runOnUiThread { Toast.makeText(this, "BT Error: ${e.message}", Toast.LENGTH_LONG).show() } }
         }.start()
@@ -205,6 +227,37 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         }
     }
 
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 101 && resultCode == RESULT_OK && data != null) {
+            Thread {
+                try {
+                    val stream = contentResolver.openInputStream(data.data!!)
+                    val b = BitmapFactory.decodeStream(stream)
+                    val scale = 180f / b.width
+                    val thumb = Bitmap.createScaledBitmap(b, 180, (b.height * scale).toInt(), true)
+                    val f = File(cacheDir, "out.webp"); val out = FileOutputStream(f)
+                    thumb.compress(Bitmap.CompressFormat.WEBP, 4, out); out.close()
+                    val id = Python.getInstance().getModule("rns_backend").callAttr("send_image", targetHash, f.absolutePath).toString()
+                    onNewMessage(ownHash, f.absolutePath, System.currentTimeMillis(), true, true, id)
+                } catch (e: Exception) {}
+            }.start()
+        }
+    }
+
+    private fun showQr(data: String) {
+        val bitMatrix = QRCodeWriter().encode(data, BarcodeFormat.QR_CODE, 512, 512)
+        val bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.RGB_565)
+        for (x in 0..511) for (y in 0..511) bmp.setPixel(x, y, if (bitMatrix.get(x, y)) Color.BLACK else Color.WHITE)
+        val img = ImageView(this); img.setImageBitmap(bmp)
+        AlertDialog.Builder(this).setTitle("My RNS Hash").setView(img).setPositiveButton("Close", null).show()
+    }
+
+    private fun showBigImage(path: String) {
+        val img = ImageView(this); img.setImageBitmap(BitmapFactory.decodeFile(path))
+        AlertDialog.Builder(this).setView(img).setPositiveButton("Close", null).show()
+    }
+
     override fun onAnnounceReceived(hex: String) {
         val currentSet = prefs.getStringSet("node_list", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
         if (!currentSet.contains(hex)) {
@@ -215,16 +268,25 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
     override fun onNewMessage(s: String, c: String, t: Long, img: Boolean, sent: Boolean, id: String) {
         runOnUiThread { 
-            chatAdapter.addMessage(Message(senderHash = s, content = c, timestamp = t, isImage = img, isSent = sent), id) 
-            chatRecyclerView?.scrollToPosition(chatAdapter.itemCount - 1)
+            chatAdapter.addMessage(Message(senderHash = s, content = c, timestamp = t, isImage = img, isSent = sent), id)
+            // Scroll if we are on the chat page
+            if (currentViewType == 3) {
+                findViewById<RecyclerView>(R.id.chatRv)?.scrollToPosition(chatAdapter.itemCount - 1)
+            }
         }
     }
 
     override fun onMessageDelivered(id: String) { runOnUiThread { chatAdapter.markDelivered(id) } }
 
+    private fun replaceFrame(v: View) {
+        val container = findViewById<FrameLayout>(R.id.fragment_container)
+        container.removeAllViews(); container.addView(v)
+    }
+
     private fun manualAddNode() {
         val input = EditText(this); input.hint = "Hex Address"
-        AlertDialog.Builder(this).setTitle("Manual Add").setView(input).setPositiveButton("Add") { _,_ -> onAnnounceReceived(input.text.toString().trim()) }.show()
+        AlertDialog.Builder(this).setTitle("Manual Add").setView(input)
+            .setPositiveButton("Add") { _,_ -> onAnnounceReceived(input.text.toString().trim()) }.show()
     }
 
     private fun editNodeNickname(hex: String) {
@@ -234,18 +296,8 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         }.show()
     }
 
-    private fun showBigImage(path: String) {
-        val img = ImageView(this); img.setImageBitmap(BitmapFactory.decodeFile(path))
-        AlertDialog.Builder(this).setView(img).setPositiveButton("Close", null).show()
-    }
-
-    private fun replaceFrame(v: View) {
-        val container = findViewById<FrameLayout>(R.id.fragment_container)
-        container.removeAllViews(); container.addView(v)
-    }
-
     private fun checkPermissions(): Boolean {
-        val p = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_ADMIN, Manifest.permission.CAMERA)
+        val p = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_ADMIN)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) { p.add(Manifest.permission.BLUETOOTH_CONNECT); p.add(Manifest.permission.BLUETOOTH_SCAN) }
         if (p.any { ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }) { ActivityCompat.requestPermissions(this, p.toTypedArray(), 1); return false }
         return true
