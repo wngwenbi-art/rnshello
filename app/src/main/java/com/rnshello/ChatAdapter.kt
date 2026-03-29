@@ -10,6 +10,8 @@ class ChatAdapter(private val context: Context, private val onImageClick: (Strin
     private val messages = mutableListOf<Message>()
     private val messageMap = mutableMapOf<String, Int>()
 
+    fun getMessages(): List<Message> = messages
+
     fun addMessage(message: Message, lxmfId: String? = null) {
         messages.add(message)
         if (lxmfId != null) messageMap[lxmfId] = messages.size - 1
