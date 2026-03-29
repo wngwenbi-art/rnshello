@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical" android:layout_width="match_parent" android:layout_height="match_parent" android:padding="8dp">
+    <Button android:id="@+id/btnManualAdd" android:text="Manual Add Node / Scan QR" android:layout_width="match_parent" android:layout_height="wrap_content" />
+    <TextView android:text="Discovered Mesh Nodes:" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+    <ListView android:id="@+id/nodeListView" android:layout_width="match_parent" android:layout_height="match_parent" />
+</LinearLayout>

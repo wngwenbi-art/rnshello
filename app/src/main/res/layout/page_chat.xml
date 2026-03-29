@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical" android:layout_width="match_parent" android:layout_height="match_parent">
+    <androidx.recyclerview.widget.RecyclerView android:id="@+id/chatRv" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:background="#F5F5F5" />
+    <LinearLayout android:orientation="horizontal" android:layout_width="match_parent" android:layout_height="wrap_content" android:padding="8dp">
+        <Button android:id="@+id/btnChatImg" android:text="IMG" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+        <EditText android:id="@+id/chatInput" android:hint="Message..." android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" />
+        <Button android:id="@+id/btnChatSend" android:text="Send" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+    </LinearLayout>
+</LinearLayout>

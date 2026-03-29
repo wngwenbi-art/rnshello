@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent" android:padding="16dp">
+    <LinearLayout android:orientation="vertical" android:layout_width="match_parent" android:layout_height="wrap_content">
+        <TextView android:text="MY ADDRESS (Tap for QR)" android:textStyle="bold" android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <TextView android:id="@+id/setHash" android:text="Loading..." android:background="#EEE" android:padding="8dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="16dp" />
+        
+        <EditText android:id="@+id/setNick" android:hint="Your Nickname" android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <Button android:id="@+id/btnSaveSettings" android:text="Save Nickname" android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <TextView android:text="RNode Bluetooth" android:textStyle="bold" android:layout_marginTop="16dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <Spinner android:id="@+id/setBtSpinner" android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <Button android:id="@+id/btnSetConnect" android:text="Connect RNode" android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <TextView android:text="Radio Parameters (Hz)" android:textStyle="bold" android:layout_marginTop="16dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <EditText android:id="@+id/setFreq" android:text="433025000" android:inputType="number" android:layout_width="match_parent" android:layout_height="wrap_content" />
+    </LinearLayout>
+</ScrollView>
