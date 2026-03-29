@@ -14,6 +14,8 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.util.Log
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
@@ -28,8 +30,6 @@ import com.google.zxing.integration.android.IntentIntegrator
 import com.google.zxing.qrcode.QRCodeWriter
 import java.io.File
 import java.io.FileOutputStream
-import java.io.InputStream
-import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -47,9 +47,8 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     private lateinit var chatAdapter: ChatAdapter
     private val discoveredNodes = mutableListOf<String>()
     private lateinit var nodesAdapter: ArrayAdapter<String>
-    
-    // We keep track of the currently inflated view to update it dynamically
-    private var currentViewType: Int = 0 // 1: Settings, 2: Nodes, 3: Chat
+    private var chatRecyclerView: RecyclerView? = null
+    private var currentViewType: Int = 2 // Start on Nodes
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,7 +63,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         val nav = findViewById<BottomNavigationView>(R.id.bottom_nav)
         nav.setOnItemSelectedListener { item ->
             when(item.itemId) {
-                R.id.nav_settings -> { currentViewType = 1; showSettings() }
                 R.id.nav_nodes -> { currentViewType = 2; showNodes() }
                 R.id.nav_chat -> { currentViewType = 3; showChat() }
             }
@@ -72,9 +70,57 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         }
 
         if (checkPermissions()) startRns()
-        currentViewType = 1
-        showSettings()
+        showNodes() // Default Page
     }
+
+    // --- TOOLBAR MENU LOGIC ---
+    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
+        menuInflater.inflate(R.menu.main_toolbar_menu, menu)
+        return true
+    }
+
+    override fun onPrepareOptionsMenu(menu: Menu?): Boolean {
+        // Only show the "+" button when on the Nodes page
+        menu?.findItem(R.id.action_add_node)?.isVisible = (currentViewType == 2)
+        return super.onPrepareOptionsMenu(menu)
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        when(item.itemId) {
+            R.id.action_add_node -> {
+                IntentIntegrator(this).setOrientationLocked(false).setPrompt("Scan Hex QR").initiateScan()
+            }
+            R.id.action_settings -> {
+                currentViewType = 1
+                invalidateOptionsMenu() // Refresh toolbar icons
+                showSettings()
+            }
+        }
+        return true
+    }
+
+    private fun showNodes() {
+        currentViewType = 2
+        invalidateOptionsMenu()
+        val view = layoutInflater.inflate(R.layout.page_nodes, null)
+        val lv = view.findViewById<ListView>(R.id.nodeListView)
+        lv.adapter = nodesAdapter
+        lv.setOnItemClickListener { _, _, i, _ ->
+            targetHash = discoveredNodes[i].split(" ").last().trim('(', ')')
+            findViewById<BottomNavigationView>(R.id.bottom_nav).selectedItemId = R.id.nav_chat
+        }
+        lv.setOnItemLongClickListener { _, _, i, _ ->
+            editNodeNickname(discoveredNodes[i].split(" ").last().trim('(', ')')); true
+        }
+
+        view.findViewById<Button>(R.id.btnManualAnnounce).setOnClickListener {
+            Thread { Python.getInstance().getModule("rns_backend").callAttr("announce_now") }.start()
+            Toast.makeText(this, "Broadcasting Identity...", Toast.LENGTH_SHORT).show()
+        }
+        replaceFrame(view)
+    }
+
+    // --- REMAINDER OF LOGIC (Settings, Chat, Bridge, etc.) ---
 
     private fun loadSavedNodes() {
         val savedHashes = prefs.getStringSet("node_list", setOf()) ?: setOf()
@@ -90,10 +136,8 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         val view = layoutInflater.inflate(R.layout.page_settings, null)
         val addressDisplay = view.findViewById<TextView>(R.id.addressDisplay)
         val nickInput = view.findViewById<EditText>(R.id.setNick)
-        
         addressDisplay.text = if(ownHash.isEmpty()) "Initializing..." else ownHash
         addressDisplay.setOnClickListener { if(ownHash.isNotEmpty()) showQr(ownHash) }
-        
         nickInput.setText(prefs.getString("my_nickname", "User"))
 
         val spinRegion = view.findViewById<Spinner>(R.id.spinRegion)
@@ -139,30 +183,15 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         replaceFrame(view)
     }
 
-    private fun showNodes() {
-        val view = layoutInflater.inflate(R.layout.page_nodes, null)
-        val lv = view.findViewById<ListView>(R.id.nodeListView)
-        lv.adapter = nodesAdapter
-        lv.setOnItemClickListener { _, _, i, _ ->
-            targetHash = discoveredNodes[i].split(" ").last().trim('(', ')')
-            findViewById<BottomNavigationView>(R.id.bottom_nav).selectedItemId = R.id.nav_chat
-        }
-        lv.setOnItemLongClickListener { _, _, i, _ ->
-            editNodeNickname(discoveredNodes[i].split(" ").last().trim('(', ')')); true
-        }
-        view.findViewById<Button>(R.id.btnManualAdd).setOnClickListener { manualAddNode() }
-        replaceFrame(view)
-    }
-
     private fun showChat() {
         val view = layoutInflater.inflate(R.layout.page_chat, null)
         val header = view.findViewById<TextView>(R.id.targetNodeInfo)
         val nick = prefs.getString("nick_$targetHash", "")
         header.text = if (!nick.isNullOrEmpty()) "Chat: $nick" else "Chat: ${targetHash.take(8)}"
 
-        val rv = view.findViewById<RecyclerView>(R.id.chatRv)
-        rv.layoutManager = LinearLayoutManager(this)
-        rv.adapter = chatAdapter
+        chatRecyclerView = view.findViewById(R.id.chatRv)
+        chatRecyclerView?.layoutManager = LinearLayoutManager(this)
+        chatRecyclerView?.adapter = chatAdapter
         
         view.findViewById<Button>(R.id.btnChatSend).setOnClickListener {
             val input = view.findViewById<EditText>(R.id.chatInput)
@@ -187,7 +216,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 py.getModule("os").get("environ")?.callAttr("__setitem__", "HOME", filesDir.absolutePath)
                 val nick = prefs.getString("my_nickname", "User")
                 ownHash = py.getModule("rns_backend").callAttr("start_rns", filesDir.absolutePath, this, nick).toString()
-                runOnUiThread { if (currentViewType == 1) showSettings() } // Update the display
+                runOnUiThread { if (currentViewType == 1) showSettings() }
             } catch (e: Exception) { Log.e("RNS", e.message ?: "") }
         }.start()
     }
@@ -203,12 +232,10 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 tcpServer = ServerSocket(); tcpServer?.reuseAddress = true; tcpServer?.bind(InetSocketAddress("127.0.0.1", 7633))
                 isBridging = true
                 Thread { bridgeLoop() }.start()
-                
                 val f = when(prefs.getInt("sel_region", 0)) { 0 -> "433050000"; 1 -> "915000000"; else -> "433000000" }
                 val bw = when(prefs.getInt("sel_bw", 0)) { 0 -> "125000"; 1 -> "62500"; else -> "31250" }
                 val sf = (prefs.getInt("sel_sf", 1) + 7).toString()
                 val cr = (prefs.getInt("sel_cr", 1) + 5).toString()
-
                 Python.getInstance().getModule("rns_backend").callAttr("inject_rnode", f, bw, "17", sf, cr)
                 runOnUiThread { Toast.makeText(this, "RNode Connected", Toast.LENGTH_SHORT).show() }
             } catch (e: Exception) { runOnUiThread { Toast.makeText(this, "BT Error: ${e.message}", Toast.LENGTH_LONG).show() } }
@@ -228,12 +255,14 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 101 && resultCode == RESULT_OK && data != null) {
+        val res = IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
+        if (res != null && res.contents != null) {
+            onAnnounceReceived(res.contents.trim())
+            Toast.makeText(this, "Added from QR", Toast.LENGTH_SHORT).show()
+        } else if (requestCode == 101 && resultCode == RESULT_OK && data != null) {
             Thread {
                 try {
-                    val stream = contentResolver.openInputStream(data.data!!)
-                    val b = BitmapFactory.decodeStream(stream)
+                    val b = BitmapFactory.decodeStream(contentResolver.openInputStream(data.data!!))
                     val scale = 180f / b.width
                     val thumb = Bitmap.createScaledBitmap(b, 180, (b.height * scale).toInt(), true)
                     val f = File(cacheDir, "out.webp"); val out = FileOutputStream(f)
@@ -242,7 +271,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                     onNewMessage(ownHash, f.absolutePath, System.currentTimeMillis(), true, true, id)
                 } catch (e: Exception) {}
             }.start()
-        }
+        } else { super.onActivityResult(requestCode, resultCode, data) }
     }
 
     private fun showQr(data: String) {
@@ -269,10 +298,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     override fun onNewMessage(s: String, c: String, t: Long, img: Boolean, sent: Boolean, id: String) {
         runOnUiThread { 
             chatAdapter.addMessage(Message(senderHash = s, content = c, timestamp = t, isImage = img, isSent = sent), id)
-            // Scroll if we are on the chat page
-            if (currentViewType == 3) {
-                findViewById<RecyclerView>(R.id.chatRv)?.scrollToPosition(chatAdapter.itemCount - 1)
-            }
+            chatRecyclerView?.scrollToPosition(chatAdapter.itemCount - 1)
         }
     }
 
@@ -283,12 +309,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         container.removeAllViews(); container.addView(v)
     }
 
-    private fun manualAddNode() {
-        val input = EditText(this); input.hint = "Hex Address"
-        AlertDialog.Builder(this).setTitle("Manual Add").setView(input)
-            .setPositiveButton("Add") { _,_ -> onAnnounceReceived(input.text.toString().trim()) }.show()
-    }
-
     private fun editNodeNickname(hex: String) {
         val input = EditText(this); input.hint = "Nickname"
         AlertDialog.Builder(this).setTitle("Set Nickname").setView(input).setPositiveButton("Save") { _,_ -> 
@@ -297,7 +317,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     }
 
     private fun checkPermissions(): Boolean {
-        val p = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_ADMIN)
+        val p = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_ADMIN, Manifest.permission.CAMERA)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) { p.add(Manifest.permission.BLUETOOTH_CONNECT); p.add(Manifest.permission.BLUETOOTH_SCAN) }
         if (p.any { ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }) { ActivityCompat.requestPermissions(this, p.toTypedArray(), 1); return false }
         return true

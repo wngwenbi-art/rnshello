@@ -1,5 +1,4 @@
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:id="@+id/nav_settings" android:title="Settings" android:icon="@android:drawable/ic_menu_preferences" />
     <item android:id="@+id/nav_nodes" android:title="Nodes" android:icon="@android:drawable/ic_menu_mylocation" />
     <item android:id="@+id/nav_chat" android:title="Chat" android:icon="@android:drawable/stat_notify_chat" />
 </menu>
