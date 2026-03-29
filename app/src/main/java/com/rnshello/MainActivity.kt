@@ -28,6 +28,8 @@ import com.google.zxing.integration.android.IntentIntegrator
 import com.google.zxing.qrcode.QRCodeWriter
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -40,6 +42,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     private var isBridging = false
     private var btSocket: BluetoothSocket? = null
     private var tcpServer: ServerSocket? = null
+    private var tcpClient: Socket? = null
     
     private lateinit var chatAdapter: ChatAdapter
     private val discoveredNodes = mutableListOf<String>()
@@ -76,7 +79,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         hashTxt.setOnClickListener { if(ownHash.isNotEmpty()) showQr(ownHash) }
         nickInput.setText(prefs.getString("nickname", "User"))
 
-        // Radio Spinners Setup
         val spinRegion = view.findViewById<Spinner>(R.id.spinRegion)
         val spinBw = view.findViewById<Spinner>(R.id.spinBw)
         val spinSf = view.findViewById<Spinner>(R.id.spinSf)
@@ -87,11 +89,10 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         spinSf.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, (7..12).toList())
         spinCr.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, (5..8).toList())
 
-        // Set previous selections
         spinRegion.setSelection(prefs.getInt("sel_region", 0))
         spinBw.setSelection(prefs.getInt("sel_bw", 0))
-        spinSf.setSelection(prefs.getInt("sel_sf", 1)) // Default SF8
-        spinCr.setSelection(prefs.getInt("sel_cr", 1)) // Default CR6
+        spinSf.setSelection(prefs.getInt("sel_sf", 1))
+        spinCr.setSelection(prefs.getInt("sel_cr", 1))
 
         view.findViewById<Button>(R.id.btnSaveSettings).setOnClickListener {
             prefs.edit().apply {
@@ -118,7 +119,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         view.findViewById<Button>(R.id.btnRefreshBt).setOnClickListener { updateBT() }
         view.findViewById<Button>(R.id.btnSetConnect).setOnClickListener {
             if (btSpinner.selectedItem != null) {
-                hotConnect(btSpinner.selectedItem.toString().substringAfterLast("\n"))
+                hotConnectBt(btSpinner.selectedItem.toString().substringAfterLast("\n"))
             }
         }
         replaceFrame(view)
@@ -135,7 +136,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         lv.setOnItemLongClickListener { _, _, i, _ ->
             editNodeNickname(discoveredNodes[i].split(" ").last().trim('(', ')')); true
         }
-
         val btnAdd = view.findViewById<Button>(R.id.btnManualAdd)
         btnAdd.setOnClickListener { manualAddNode() }
         btnAdd.setOnLongClickListener { 
@@ -183,10 +183,10 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         }.start()
     }
 
-    private fun hotConnect(mac: String) {
+    private fun hotConnectBt(mac: String) {
         Thread {
             try {
-                isBridging = false; btSocket?.close(); tcpServer?.close()
+                isBridging = false; btSocket?.close(); tcpServer?.close(); tcpClient?.close()
                 val dev = BluetoothAdapter.getDefaultAdapter().getRemoteDevice(mac)
                 val m = dev.javaClass.getMethod("createInsecureRfcommSocket", Int::class.javaPrimitiveType)
                 btSocket = m.invoke(dev, 1) as BluetoothSocket
@@ -195,7 +195,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 isBridging = true
                 Thread { bridgeLoop() }.start()
 
-                // Map UI to RNS values
                 val freq = when(prefs.getInt("sel_region", 0)) { 0 -> "433050000"; 1 -> "915000000"; else -> "433000000" }
                 val bw = when(prefs.getInt("sel_bw", 0)) { 0 -> "125000"; 1 -> "62500"; else -> "31250" }
                 val sf = (prefs.getInt("sel_sf", 1) + 7).toString()
@@ -203,7 +202,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
                 val pyStatus = Python.getInstance().getModule("rns_backend").callAttr("inject_rnode", freq, bw, "17", sf, cr).toString()
                 runOnUiThread { Toast.makeText(this, "RNode: $pyStatus", Toast.LENGTH_SHORT).show() }
-            } catch (e: Exception) { runOnUiThread { Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show() } }
+            } catch (e: Exception) { runOnUiThread { Toast.makeText(this, "BT Error: ${e.message}", Toast.LENGTH_LONG).show() } }
         }.start()
     }
 
@@ -213,23 +212,23 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 val client = tcpServer?.accept() ?: break
                 val btIn = btSocket?.inputStream; val btOut = btSocket?.outputStream
                 val tcpIn = client.inputStream; val tcpOut = client.outputStream
-                Thread { try { val buf = ByteArray(1024); var r: Int; while(client.isConnected && tcpIn.read(buf).also{r=it}!=-1) btOut?.write(buf,0,r) } catch(e:Exception){} finally {client.close()} }.start()
-                Thread { try { val buf = ByteArray(1024); var r: Int; while(client.isConnected && btIn!!.read(buf).also{r=it}!=-1) tcpOut.write(buf,0,r) } catch(e:Exception){} finally {client.close()} }.start()
+                
+                // FIXED: Initialized variable 'r' to prevent compile error
+                Thread { try { val buf = ByteArray(1024); var r = 0; while(client.isConnected && tcpIn.read(buf).also{r=it}!=-1) btOut?.write(buf,0,r) } catch(e:Exception){} finally {client.close()} }.start()
+                Thread { try { val buf = ByteArray(1024); var r = 0; while(client.isConnected && btIn!!.read(buf).also{r=it}!=-1) tcpOut.write(buf,0,r) } catch(e:Exception){} finally {client.close()} }.start()
             } catch (e: Exception) { break }
         }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        val result = IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
-        if (result != null && result.contents != null) {
-            onAnnounceReceived(result.contents.trim())
-            Toast.makeText(this, "Node Added from QR", Toast.LENGTH_SHORT).show()
+        val res = IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
+        if (res != null && res.contents != null) {
+            onAnnounceReceived(res.contents.trim())
         } else if (requestCode == 101 && resultCode == RESULT_OK && data != null) {
             Thread {
                 try {
                     val stream = contentResolver.openInputStream(data.data!!)
                     val b = BitmapFactory.decodeStream(stream)
-                    // EXTRA AGGRESSIVE: 180px, 4% quality
                     val thumb = Bitmap.createScaledBitmap(b, 180, (b.height * (180f/b.width)).toInt(), true)
                     val f = File(cacheDir, "out.webp"); val out = FileOutputStream(f)
                     thumb.compress(Bitmap.CompressFormat.WEBP, 4, out); out.close()
@@ -245,7 +244,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         val bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.RGB_565)
         for (x in 0..511) for (y in 0..511) bmp.setPixel(x, y, if (bitMatrix.get(x, y)) Color.BLACK else Color.WHITE)
         val img = ImageView(this); img.setImageBitmap(bmp)
-        AlertDialog.Builder(this).setTitle("My RNS Hash").setView(img).show()
+        AlertDialog.Builder(this).setTitle("My RNS Hash").setView(img).setPositiveButton("Close", null).show()
     }
 
     override fun onAnnounceReceived(hex: String) {
