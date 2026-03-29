@@ -31,6 +31,7 @@ import java.io.FileOutputStream
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.UUID
 
 class MainActivity : AppCompatActivity(), RnsCallback {
 
@@ -42,7 +43,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
     private var tcpServer: ServerSocket? = null
     
     private lateinit var chatAdapter: ChatAdapter
-    private val discoveredNodes = mutableListOf<String>() // Format: "Nick (Hex)" or "Hex"
+    private val discoveredNodes = mutableListOf<String>()
     private lateinit var nodesAdapter: ArrayAdapter<String>
     private var chatRecyclerView: RecyclerView? = null
 
@@ -54,7 +55,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         chatAdapter = ChatAdapter { path -> showBigImage(path) }
         nodesAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, discoveredNodes)
 
-        // LOAD PERSISTED NODES
         loadSavedNodes()
 
         val nav = findViewById<BottomNavigationView>(R.id.bottom_nav)
@@ -71,36 +71,23 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         showSettings()
     }
 
-    // --- PERSISTENCE LOGIC ---
-
     private fun loadSavedNodes() {
         val savedHashes = prefs.getStringSet("node_list", setOf()) ?: setOf()
         discoveredNodes.clear()
         for (hex in savedHashes) {
             val nick = prefs.getString("nick_$hex", "")
-            val display = if (!nick.isNullOrEmpty()) "$nick ($hex)" else hex
-            discoveredNodes.add(display)
+            discoveredNodes.add(if (!nick.isNullOrEmpty()) "$nick ($hex)" else hex)
         }
         nodesAdapter.notifyDataSetChanged()
     }
 
-    private fun saveNodeToDatabase(hex: String) {
-        val currentSet = prefs.getStringSet("node_list", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
-        if (!currentSet.contains(hex)) {
-            currentSet.add(hex)
-            prefs.edit().putStringSet("node_list", currentSet).apply()
-        }
-    }
-
-    // --- UI PAGES ---
-
     private fun showSettings() {
         val view = layoutInflater.inflate(R.layout.page_settings, null)
-        val hashTxt = view.findViewById<TextView>(R.id.setHash)
+        val addressDisplay = view.findViewById<TextView>(R.id.addressDisplay)
         val nickInput = view.findViewById<EditText>(R.id.setNick)
         
-        hashTxt.text = if(ownHash.isEmpty()) "Initializing..." else ownHash
-        hashTxt.setOnClickListener { if(ownHash.isNotEmpty()) showQr(ownHash) }
+        addressDisplay.text = if(ownHash.isEmpty()) "Initializing..." else ownHash
+        addressDisplay.setOnClickListener { if(ownHash.isNotEmpty()) showQr(ownHash) }
         nickInput.setText(prefs.getString("my_nickname", "User"))
 
         val spinRegion = view.findViewById<Spinner>(R.id.spinRegion)
@@ -113,21 +100,12 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         spinSf.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, (7..12).toList())
         spinCr.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, (5..8).toList())
 
-        spinRegion.setSelection(prefs.getInt("sel_region", 0))
-        spinBw.setSelection(prefs.getInt("sel_bw", 0))
-        spinSf.setSelection(prefs.getInt("sel_sf", 1))
-        spinCr.setSelection(prefs.getInt("sel_cr", 1))
-
         view.findViewById<Button>(R.id.btnSaveSettings).setOnClickListener {
             prefs.edit().apply {
                 putString("my_nickname", nickInput.text.toString())
-                putInt("sel_region", spinRegion.selectedItemPosition)
-                putInt("sel_bw", spinBw.selectedItemPosition)
-                putInt("sel_sf", spinSf.selectedItemPosition)
-                putInt("sel_cr", spinCr.selectedItemPosition)
-                apply()
+                putInt("sel_region", spinRegion.selectedItemPosition); apply()
             }
-            Toast.makeText(this, "Persistence Set", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
         }
 
         val btSpinner = view.findViewById<Spinner>(R.id.setBtSpinner)
@@ -139,7 +117,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
             }
         }
         updateBT()
-
         view.findViewById<Button>(R.id.btnRefreshBt).setOnClickListener { updateBT() }
         view.findViewById<Button>(R.id.btnSetConnect).setOnClickListener {
             if (btSpinner.selectedItem != null) hotConnectBt(btSpinner.selectedItem.toString().substringAfterLast("\n"))
@@ -158,12 +135,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         lv.setOnItemLongClickListener { _, _, i, _ ->
             editNodeNickname(discoveredNodes[i].split(" ").last().trim('(', ')')); true
         }
-        val btnAdd = view.findViewById<Button>(R.id.btnManualAdd)
-        btnAdd.setOnClickListener { manualAddNode() }
-        btnAdd.setOnLongClickListener { 
-            IntentIntegrator(this).setOrientationLocked(false).setPrompt("Scan Hex QR").initiateScan()
-            true
-        }
+        view.findViewById<Button>(R.id.btnManualAdd).setOnClickListener { manualAddNode() }
         replaceFrame(view)
     }
 
@@ -171,7 +143,7 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         val view = layoutInflater.inflate(R.layout.page_chat, null)
         val header = view.findViewById<TextView>(R.id.targetNodeInfo)
         val nick = prefs.getString("nick_$targetHash", "")
-        header?.text = if (!nick.isNullOrEmpty()) "Chat: $nick" else "Chat: ${targetHash.take(8)}"
+        header.text = if (!nick.isNullOrEmpty()) "Chat: $nick" else "Chat: ${targetHash.take(8)}"
 
         chatRecyclerView = view.findViewById(R.id.chatRv)
         chatRecyclerView?.layoutManager = LinearLayoutManager(this)
@@ -192,16 +164,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         replaceFrame(view)
     }
 
-    private fun showBigImage(path: String) {
-        val img = ImageView(this); img.setImageBitmap(BitmapFactory.decodeFile(path))
-        AlertDialog.Builder(this).setView(img).setPositiveButton("Close", null).show()
-    }
-
-    private fun replaceFrame(v: View) {
-        val container = findViewById<FrameLayout>(R.id.fragment_container)
-        container.removeAllViews(); container.addView(v)
-    }
-
     private fun startRns() {
         Thread {
             try {
@@ -210,7 +172,6 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 py.getModule("os").get("environ")?.callAttr("__setitem__", "HOME", filesDir.absolutePath)
                 val nick = prefs.getString("my_nickname", "User")
                 ownHash = py.getModule("rns_backend").callAttr("start_rns", filesDir.absolutePath, this, nick).toString()
-                runOnUiThread { addressDisplay.text = "My Addr: $ownHash" }
             } catch (e: Exception) { Log.e("RNS", e.message ?: "") }
         }.start()
     }
@@ -226,14 +187,8 @@ class MainActivity : AppCompatActivity(), RnsCallback {
                 tcpServer = ServerSocket(); tcpServer?.reuseAddress = true; tcpServer?.bind(InetSocketAddress("127.0.0.1", 7633))
                 isBridging = true
                 Thread { bridgeLoop() }.start()
-
-                val f = when(prefs.getInt("sel_region", 0)) { 0 -> "433050000"; 1 -> "915000000"; else -> "433000000" }
-                val bw = when(prefs.getInt("sel_bw", 0)) { 0 -> "125000"; 1 -> "62500"; else -> "31250" }
-                val sf = (prefs.getInt("sel_sf", 1) + 7).toString()
-                val cr = (prefs.getInt("sel_cr", 1) + 5).toString()
-
-                val pyStatus = Python.getInstance().getModule("rns_backend").callAttr("inject_rnode", f, bw, "17", sf, cr).toString()
-                runOnUiThread { Toast.makeText(this, "RNode: $pyStatus", Toast.LENGTH_SHORT).show() }
+                Python.getInstance().getModule("rns_backend").callAttr("inject_rnode", "433025000", "125000", "17", "8", "6")
+                runOnUiThread { Toast.makeText(this, "RNode Connected", Toast.LENGTH_SHORT).show() }
             } catch (e: Exception) { runOnUiThread { Toast.makeText(this, "BT Error: ${e.message}", Toast.LENGTH_LONG).show() } }
         }.start()
     }
@@ -250,38 +205,11 @@ class MainActivity : AppCompatActivity(), RnsCallback {
         }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        val res = IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
-        if (res != null && res.contents != null) {
-            onAnnounceReceived(res.contents.trim())
-        } else if (requestCode == 101 && resultCode == RESULT_OK && data != null) {
-            Thread {
-                try {
-                    val stream = contentResolver.openInputStream(data.data!!)
-                    val b = BitmapFactory.decodeStream(stream)
-                    val scale = 180f / b.width
-                    val thumb = Bitmap.createScaledBitmap(b, 180, (b.height * scale).toInt(), true)
-                    val f = File(cacheDir, "out.webp"); val out = FileOutputStream(f)
-                    thumb.compress(Bitmap.CompressFormat.WEBP, 4, out); out.close()
-                    val id = Python.getInstance().getModule("rns_backend").callAttr("send_image", targetHash, f.absolutePath).toString()
-                    onNewMessage(ownHash, f.absolutePath, System.currentTimeMillis(), true, true, id)
-                } catch (e: Exception) {}
-            }.start()
-        }
-    }
-
-    private fun showQr(data: String) {
-        val bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.RGB_565)
-        val bitMatrix = QRCodeWriter().encode(data, BarcodeFormat.QR_CODE, 512, 512)
-        for (x in 0..511) for (y in 0..511) bmp.setPixel(x, y, if (bitMatrix.get(x, y)) Color.BLACK else Color.WHITE)
-        val img = ImageView(this); img.setImageBitmap(bmp)
-        AlertDialog.Builder(this).setTitle("My RNS Hash").setView(img).setPositiveButton("Close", null).show()
-    }
-
     override fun onAnnounceReceived(hex: String) {
-        runOnUiThread {
-            saveNodeToDatabase(hex)
-            loadSavedNodes()
+        val currentSet = prefs.getStringSet("node_list", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+        if (!currentSet.contains(hex)) {
+            currentSet.add(hex); prefs.edit().putStringSet("node_list", currentSet).apply()
+            runOnUiThread { loadSavedNodes() }
         }
     }
 
@@ -296,17 +224,24 @@ class MainActivity : AppCompatActivity(), RnsCallback {
 
     private fun manualAddNode() {
         val input = EditText(this); input.hint = "Hex Address"
-        AlertDialog.Builder(this).setTitle("Manual Add").setView(input)
-            .setPositiveButton("Add") { _,_ -> onAnnounceReceived(input.text.toString().trim()) }.show()
+        AlertDialog.Builder(this).setTitle("Manual Add").setView(input).setPositiveButton("Add") { _,_ -> onAnnounceReceived(input.text.toString().trim()) }.show()
     }
 
     private fun editNodeNickname(hex: String) {
         val input = EditText(this); input.hint = "Nickname"
-        AlertDialog.Builder(this).setTitle("Set Nickname for ${hex.take(6)}").setView(input)
-            .setPositiveButton("Save") { _,_ -> 
-                prefs.edit().putString("nick_$hex", input.text.toString()).apply()
-                loadSavedNodes()
-            }.show()
+        AlertDialog.Builder(this).setTitle("Set Nickname").setView(input).setPositiveButton("Save") { _,_ -> 
+            prefs.edit().putString("nick_$hex", input.text.toString()).apply(); loadSavedNodes()
+        }.show()
+    }
+
+    private fun showBigImage(path: String) {
+        val img = ImageView(this); img.setImageBitmap(BitmapFactory.decodeFile(path))
+        AlertDialog.Builder(this).setView(img).setPositiveButton("Close", null).show()
+    }
+
+    private fun replaceFrame(v: View) {
+        val container = findViewById<FrameLayout>(R.id.fragment_container)
+        container.removeAllViews(); container.addView(v)
     }
 
     private fun checkPermissions(): Boolean {
